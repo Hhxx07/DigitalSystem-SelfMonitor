@@ -1,0 +1,9 @@
+# Vivado build artifacts
+chaoshengbo/chaoshengbo.cache/
+chaoshengbo/chaoshengbo.hw/
+chaoshengbo/chaoshengbo.ip_user_files/
+chaoshengbo/chaoshengbo.runs/
+chaoshengbo/chaoshengbo.sim/
+
+# Kiro/Claude
+lcd/.claude/
