@@ -1,0 +1,38 @@
+## Example XDC for EGO1 / Artix-7. Replace PACKAGE_PIN values with the
+## actual pins used by your LCD wiring or shield schematic.
+
+create_clock -period 10.000 -name clk100 [get_ports clk]
+
+set_property IOSTANDARD LVCMOS33 [get_ports clk]
+set_property IOSTANDARD LVCMOS33 [get_ports rst_n]
+set_property IOSTANDARD LVCMOS33 [get_ports pressure_ok]
+set_property IOSTANDARD LVCMOS33 [get_ports ir_ok]
+set_property IOSTANDARD LVCMOS33 [get_ports {distance_cm[*]}]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_cs_n]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_rst_n]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_dc]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_scl]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_mosi]
+set_property IOSTANDARD LVCMOS33 [get_ports lcd_blk]
+
+## Uncomment and edit these package pins for your EGO1 board:
+## set_property PACKAGE_PIN <PIN_CLK> [get_ports clk]
+## set_property PACKAGE_PIN <PIN_RST> [get_ports rst_n]
+## set_property PACKAGE_PIN <PIN_PRESSURE> [get_ports pressure_ok]
+## set_property PACKAGE_PIN <PIN_IR> [get_ports ir_ok]
+## set_property PACKAGE_PIN <PIN_D0> [get_ports {distance_cm[0]}]
+## set_property PACKAGE_PIN <PIN_D1> [get_ports {distance_cm[1]}]
+## set_property PACKAGE_PIN <PIN_D2> [get_ports {distance_cm[2]}]
+## set_property PACKAGE_PIN <PIN_D3> [get_ports {distance_cm[3]}]
+## set_property PACKAGE_PIN <PIN_D4> [get_ports {distance_cm[4]}]
+## set_property PACKAGE_PIN <PIN_D5> [get_ports {distance_cm[5]}]
+## set_property PACKAGE_PIN <PIN_D6> [get_ports {distance_cm[6]}]
+## set_property PACKAGE_PIN <PIN_D7> [get_ports {distance_cm[7]}]
+## set_property PACKAGE_PIN <PIN_D8> [get_ports {distance_cm[8]}]
+## set_property PACKAGE_PIN <PIN_D9> [get_ports {distance_cm[9]}]
+## set_property PACKAGE_PIN <PIN_LCD_CS>  [get_ports lcd_cs_n]
+## set_property PACKAGE_PIN <PIN_LCD_RST> [get_ports lcd_rst_n]
+## set_property PACKAGE_PIN <PIN_LCD_DC>  [get_ports lcd_dc]
+## set_property PACKAGE_PIN <PIN_LCD_SCL> [get_ports lcd_scl]
+## set_property PACKAGE_PIN <PIN_LCD_MOSI> [get_ports lcd_mosi]
+## set_property PACKAGE_PIN <PIN_LCD_BLK> [get_ports lcd_blk]
