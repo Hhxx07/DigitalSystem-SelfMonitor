@@ -1,5 +1,13 @@
 `timescale 1ns / 1ps
 
+// ============================================================
+// 模块: rtc_clock
+// 功能: 软件 RTC，对系统时钟分频产生 1 Hz tick，并维护完整日历
+//       支持闰年判断，月末自动进位
+// 输入: clk, rst_n
+// 输出: tick_1hz(每秒单周期脉冲), year/month/day/hour/minute/second
+// 参数: CLK_HZ — 系统时钟频率; INIT_* — 上电初始时间
+// ============================================================
 module rtc_clock #(
     parameter integer CLK_HZ     = 100000000,
     parameter integer INIT_YEAR  = 2026,
@@ -22,6 +30,7 @@ module rtc_clock #(
 
     reg [31:0] div_cnt;
 
+    // 判断闰年：能被 400 整除 OR (能被 4 整除 AND 不能被 100 整除)
     function is_leap_year;
         input [15:0] y;
         begin
@@ -36,6 +45,7 @@ module rtc_clock #(
         end
     endfunction
 
+    // 返回指定年月的天数（2 月考虑闰年）
     function [7:0] days_in_month;
         input [15:0] y;
         input [7:0]  m;
@@ -49,6 +59,7 @@ module rtc_clock #(
         end
     endfunction
 
+    // 每秒进位：秒->分->时->日->月->年，逐级溢出
     task step_one_second;
         begin
             if (second < 8'd59) begin
@@ -80,6 +91,7 @@ module rtc_clock #(
         end
     endtask
 
+    // 主计数器：每 CLK_HZ 个周期产生一次 tick_1hz 并调用 step_one_second
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             div_cnt  <= 32'd0;
