@@ -15,7 +15,8 @@ module health_lcd_top #(
 )(
     input  wire clk,
     input  wire rst_n,
-
+// 收到回复来上课
+    
     input  wire pressure_ok,
     input  wire ir_ok,
     input  wire [9:0] distance_cm,
