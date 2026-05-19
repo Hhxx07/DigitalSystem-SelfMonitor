@@ -6,12 +6,13 @@
 
 ## 文件关系
 
-顶层文件是 `health_lcd_top.v`。它把 RTC、座位状态机、HP 计算、LCD 初始化、LCD 渲染和 SPI 字节发送模块连接起来。
+顶层文件是 `health_lcd_top.v`。它把 RTC、座位状态机、HP 计算、超声波测距、LCD 初始化、LCD 渲染和 SPI 字节发送模块连接起来。
 
 ```text
 health_lcd_top.v
 ├── rtc_clock.v          产生 1 Hz tick，并维护年月日时分秒
 ├── seat_fsm.v           维护座位状态、学习时间和离座时间
+├── ../超声波/top_Ranging.v  驱动超声波模块并输出距离
 ├── hp_engine.v          根据距离和入座状态更新 HP
 ├── st7735_init.v        复位并初始化 ST7735S LCD
 ├── display_renderer.v   生成整屏 128x128 RGB565 显示数据
@@ -35,7 +36,7 @@ assign spi_data_mux  = init_done ? render_spi_data  : init_spi_data;
 
 ```verilog
 module health_lcd_top #(
-    parameter integer CLK_HZ      = 1000000,
+    parameter integer CLK_HZ      = 100000000,
     parameter integer SPI_CLK_DIV = 5,
     parameter integer FRAME_HZ    = 2,
     parameter integer INIT_YEAR   = 2026,
@@ -52,8 +53,9 @@ module health_lcd_top #(
     input  wire rst_n,
     input  wire pressure_ok,
     input  wire ir_ok,
-    input  wire [9:0] distance_cm,
+    input  wire ultrasonic_echo,
     input  wire sim_fast,
+    output wire ultrasonic_trig,
     output wire lcd_cs_n,
     output wire lcd_rst_n,
     output wire lcd_dc,
@@ -71,8 +73,9 @@ module health_lcd_top #(
 | `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
 | `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
 | `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
-| `distance_cm` | input | 10 | 距离输入，按厘米理解。HP 模块用它判断 SAFE/WARN/DANGER 坐姿等级，LCD 上也会显示当前距离。 |
+| `ultrasonic_echo` | input | 1 | 超声波模块的 Echo 输入。Echo 高电平宽度代表超声波往返时间，内部测距模块据此计算距离。 |
 | `sim_fast` | input | 1 | 仿真加速开关。为 1 时，`seat_fsm.v` 和 `hp_engine.v` 把 1 秒当作 1 分钟；上板时应接 0。 |
+| `ultrasonic_trig` | output | 1 | 超声波模块的 Trig 输出。顶层内部周期性产生触发脉冲，让超声波模块开始一次测距。 |
 | `lcd_cs_n` | output | 1 | LCD SPI 片选，低有效。发送一个字节期间拉低。 |
 | `lcd_rst_n` | output | 1 | LCD 硬件复位，低有效。由 `st7735_init.v` 控制。 |
 | `lcd_dc` | output | 1 | LCD 命令/数据选择。0 表示 command，1 表示 data。 |
@@ -88,11 +91,24 @@ assign seated = pressure_ok & ir_ok;
 
 只有两个输入都为 1，系统才认为用户处于入座状态。`seated` 同时送到 `seat_fsm.v` 和 `hp_engine.v`。
 
+距离不再由外部 `distance_cm` 输入直接给出，而是由内部超声波测距子系统产生：
+
+```verilog
+top_Ranging u_ultrasonic (...);
+```
+
+`top_Ranging` 输出 16-bit `ultrasonic_distance_cm`。LCD 显示和 HP 计算使用截位/饱和后的 10-bit `posture_distance_cm`：
+
+```verilog
+assign posture_distance_cm =
+    (ultrasonic_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_distance_cm[9:0];
+```
+
 ## 参数说明
 
 | 参数 | 当前默认值 | 用途 |
 |---|---:|---|
-| `CLK_HZ` | `1000000` | 系统时钟频率参数。当前文件默认是 1 MHz，仿真更快；EGO1 100 MHz 上板时建议改成 `100000000`。 |
+| `CLK_HZ` | `100000000` | 系统时钟频率参数。EGO1 使用 100 MHz 时钟时保持默认值即可。testbench 中会覆盖成较小数值以加快 LCD/RTC 仿真。 |
 | `SPI_CLK_DIV` | `5` | SPI SCL 半周期分频值。SCL 频率约等于 `CLK_HZ / (2 * SPI_CLK_DIV)`。 |
 | `FRAME_HZ` | `2` | LCD 整屏刷新目标帧率。 |
 | `INIT_YEAR` 等 | 见代码 | RTC 复位后的初始时间。 |
@@ -213,9 +229,9 @@ away_time_min / away_time_sec 当前离座时间
 
 ```text
 seated=0：HP 不更新
-seated=1 且 distance_cm > 50：每分钟 HP +1，最大 100
-seated=1 且 30 <= distance_cm <= 50：每分钟 HP -1，最小 0
-seated=1 且 distance_cm < 30：每分钟 HP -3，最小 0
+seated=1 且 posture_distance_cm > 50：每分钟 HP +1，最大 100
+seated=1 且 30 <= posture_distance_cm <= 50：每分钟 HP -1，最小 0
+seated=1 且 posture_distance_cm < 30：每分钟 HP -3，最小 0
 ```
 
 坐姿等级：
@@ -311,7 +327,7 @@ bits：该行 8 个像素的点阵数据
 | 显示数据 | `seat_state` | 显示状态字符串。 |
 | 显示数据 | `posture_level` | 显示姿势状态字符串，和久坐状态分开。 |
 | 显示数据 | `sit_time_min/sit_time_sec`, `away_time_min/away_time_sec` | 显示学习时间、离座时间和当前状态计时器，格式为 `mmmm:ss`。 |
-| 显示数据 | `distance_cm` | 显示当前距离，格式为 `DIST xxxxCM`。 |
+| 显示数据 | `distance_cm` | 显示当前超声波距离，格式为 `DIST xxxxCM`。 |
 | 显示数据 | `hp`, `hp_zero_alarm` | 显示 HP 数值、血条颜色和报警闪烁。 |
 
 输出给 SPI 的信号：
@@ -448,7 +464,7 @@ font_row = pix_y[2:0];  // 0..7
 - 状态为 `ST_REST`、`ST_AWAY_LONG` 时，显示当前离座时间 `away_time_min:away_time_sec`。
 - 状态为 `ST_IDLE` 时，显示 `0000:00`。
 
-`DIST 0060CM` 显示当前 `distance_cm` 输入值。显示宽度固定为 4 位十进制数字，因此 60 cm 会显示为 `0060CM`，最大可覆盖 10-bit 输入的 `1023CM`。
+`DIST 0060CM` 显示当前超声波测距值。显示宽度固定为 4 位十进制数字，因此 60 cm 会显示为 `0060CM`，最大可覆盖 LCD 渲染输入的 `1023CM`。
 
 状态显示被拆成两类，避免“久坐”和“姿势不当”混在一个字段里：
 
@@ -472,9 +488,9 @@ font_row = pix_y[2:0];  // 0..7
 
 | `posture_level` | 显示字符串 | 含义 |
 |---:|---|---|
-| 0 | `SAFE` | `distance_cm > 50`，姿势距离安全 |
-| 1 | `WARN` | `30 <= distance_cm <= 50`，姿势需要注意 |
-| 2 | `DANGER` | `distance_cm < 30`，姿势不当 |
+| 0 | `SAFE` | `posture_distance_cm > 50`，姿势距离安全 |
+| 1 | `WARN` | `30 <= posture_distance_cm <= 50`，姿势需要注意 |
+| 2 | `DANGER` | `posture_distance_cm < 30`，姿势不当 |
 
 ### 文字生成方式
 
@@ -611,7 +627,7 @@ blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
 
 ```powershell
 cd D:\UserDate\DeskTop\数字系统Project\src\lcd
-iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v
+iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v
 vvp tb_health_lcd_top.vvp
 ```
 
@@ -629,14 +645,14 @@ ALL TESTS PASSED
 
 - `clk` 的时钟约束。
 - 输入输出端口的 `LVCMOS33` I/O 标准。
-- LCD 和传感器管脚的占位模板。
+- LCD、超声波和传感器管脚的占位模板。
 
 上板前需要按实际 EGO1 板卡和 LCD 接线替换 `PACKAGE_PIN`。
 
 ## 上板注意事项
 
 1. 在 Vivado 中把 `health_lcd_top.v` 设为顶层。
-2. 添加本目录所有 `.v` 文件。
+2. 添加本目录所有 `.v` 文件，以及 `../超声波` 目录下所有 `.v` 文件。
 3. 修改 XDC 中的真实管脚。
 4. 如果使用 EGO1 的 100 MHz 时钟，把 `CLK_HZ` 改为 `100000000`。
 5. 上板时 `sim_fast` 应接 0。
@@ -651,3 +667,4 @@ ALL TESTS PASSED
 - 字库是简化 8x8 ASCII 字库。
 - RTC 没有外部校时接口。
 - LCD 初始化序列是常用最小序列，不同 ST7735S 模组可能需要增加偏移、颜色顺序或厂商初始化命令。
+

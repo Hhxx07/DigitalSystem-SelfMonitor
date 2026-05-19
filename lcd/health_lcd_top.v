@@ -19,9 +19,11 @@ module health_lcd_top #(
 
     input  wire pressure_ok,
     input  wire ir_ok,
-    input  wire [9:0] distance_cm,
+    input  wire ultrasonic_echo,
 
     input  wire sim_fast,
+
+    output wire ultrasonic_trig,
 
     output wire lcd_cs_n,
     output wire lcd_rst_n,
@@ -48,6 +50,8 @@ module health_lcd_top #(
     wire [7:0]  hp_value;
     wire        hp_zero_alarm;
     wire [1:0]  posture_level;
+    wire [15:0] ultrasonic_distance_cm;
+    wire [9:0]  posture_distance_cm;
 
     wire init_done;
     wire spi_busy;
@@ -66,6 +70,7 @@ module health_lcd_top #(
 
     assign seated = pressure_ok & ir_ok;
     assign lcd_blk = 1'b1;
+    assign posture_distance_cm = (ultrasonic_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_distance_cm[9:0];
 
     assign spi_start_mux = init_done ? render_spi_start : init_spi_start;
     assign spi_dc_mux    = init_done ? render_spi_dc    : init_spi_dc;
@@ -104,6 +109,14 @@ module health_lcd_top #(
         .sim_fast(sim_fast)
     );
 
+    top_Ranging u_ultrasonic (
+        .clk(clk),
+        .rst_n(rst_n),
+        .ultrasonic_echo(ultrasonic_echo),
+        .ultrasonic_trig(ultrasonic_trig),
+        .distance_cm(ultrasonic_distance_cm)
+    );
+
     hp_engine #(
         .INIT_HP(100)
     ) u_hp (
@@ -111,7 +124,7 @@ module health_lcd_top #(
         .rst_n(rst_n),
         .tick_1hz(tick_1hz),
         .seated(seated),
-        .distance_cm(distance_cm),
+        .distance_cm(posture_distance_cm),
         .hp(hp_value),
         .hp_zero_alarm(hp_zero_alarm),
         .posture_level(posture_level),
@@ -157,7 +170,7 @@ module health_lcd_top #(
         .sit_time_sec(sit_time_sec),
         .away_time_min(away_time_min),
         .away_time_sec(away_time_sec),
-        .distance_cm(distance_cm),
+        .distance_cm(posture_distance_cm),
         .posture_level(posture_level),
         .hp(hp_value),
         .hp_zero_alarm(hp_zero_alarm),

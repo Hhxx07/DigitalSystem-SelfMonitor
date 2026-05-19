@@ -7,7 +7,7 @@ module tb_health_lcd_top;
     reg pressure_ok;
     reg ir_ok;
     reg sim_fast;
-    reg [9:0] distance_cm;
+    reg ultrasonic_echo;
 
     wire lcd_cs_n;
     wire lcd_rst_n;
@@ -15,6 +15,7 @@ module tb_health_lcd_top;
     wire lcd_scl;
     wire lcd_mosi;
     wire lcd_blk;
+    wire ultrasonic_trig;
 
     integer errors;
     integer timeout_count;
@@ -41,8 +42,9 @@ module tb_health_lcd_top;
         .rst_n(rst_n),
         .pressure_ok(pressure_ok),
         .ir_ok(ir_ok),
-        .distance_cm(distance_cm),
+        .ultrasonic_echo(ultrasonic_echo),
         .sim_fast(sim_fast),
+        .ultrasonic_trig(ultrasonic_trig),
         .lcd_cs_n(lcd_cs_n),
         .lcd_rst_n(lcd_rst_n),
         .lcd_dc(lcd_dc),
@@ -112,10 +114,11 @@ module tb_health_lcd_top;
         pressure_ok = 1'b0;
         ir_ok = 1'b0;
         sim_fast = 1'b1;
-        distance_cm = 10'd60;
+        ultrasonic_echo = 1'b0;
 
         repeat (20) @(posedge clk);
         rst_n = 1'b1;
+        force dut.ultrasonic_distance_cm = 16'd60;
 
         timeout_count = 0;
         while ((dut.init_done != 1'b1) && (timeout_count < 10000)) begin
@@ -138,15 +141,15 @@ module tb_health_lcd_top;
         pressure_ok = 1'b1;
         ir_ok = 1'b1;
 
-        distance_cm = 10'd60;
+        force dut.ultrasonic_distance_cm = 16'd60;
         wait_sim_minutes(1);
         check_hp(8'd100, "safe saturates at 100");
 
-        distance_cm = 10'd40;
+        force dut.ultrasonic_distance_cm = 16'd40;
         wait_sim_minutes(1);
         check_hp(8'd99, "warn minus one");
 
-        distance_cm = 10'd20;
+        force dut.ultrasonic_distance_cm = 16'd20;
         wait_sim_minutes(1);
         check_hp(8'd96, "danger minus three");
 
@@ -157,7 +160,7 @@ module tb_health_lcd_top;
             errors = errors + 1;
         end
 
-        distance_cm = 10'd60;
+        force dut.ultrasonic_distance_cm = 16'd60;
         wait_sim_minutes(10);
         check_state(ST_SEDENTARY, "45min sedentary");
 
