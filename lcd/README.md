@@ -71,7 +71,7 @@ module health_lcd_top #(
 | `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
 | `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
 | `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
-| `distance_cm` | input | 10 | 距离输入，按厘米理解。HP 模块用它判断 SAFE/WARN/DANGER 坐姿等级。 |
+| `distance_cm` | input | 10 | 距离输入，按厘米理解。HP 模块用它判断 SAFE/WARN/DANGER 坐姿等级，LCD 上也会显示当前距离。 |
 | `sim_fast` | input | 1 | 仿真加速开关。为 1 时，`seat_fsm.v` 和 `hp_engine.v` 把 1 秒当作 1 分钟；上板时应接 0。 |
 | `lcd_cs_n` | output | 1 | LCD SPI 片选，低有效。发送一个字节期间拉低。 |
 | `lcd_rst_n` | output | 1 | LCD 硬件复位，低有效。由 `st7735_init.v` 控制。 |
@@ -111,7 +111,7 @@ CASET 0..127
 RASET 0..127
 ```
 
-你的屏幕实际表现为画面向左偏 2 个像素、向上偏 1 个像素，因此需要把 LCD 写入窗口改成：
+屏幕实际表现为画面向左偏 2 个像素、向上偏 1 个像素，因此需要把 LCD 写入窗口改成：
 
 ```text
 CASET 2..129
@@ -186,7 +186,18 @@ year, month, day, hour, minute, second
 - 离开达到 20 分钟进入 `ST_AWAY_LONG`。
 - 离开达到 30 分钟进入 `ST_IDLE`，清空座位所有权和学习计时。
 
+计时输出分为分钟和秒：
+
+```text
+sit_time_min / sit_time_sec   当前连续学习/入座时间
+away_time_min / away_time_sec 当前离座时间
+```
+
+这些秒级输出只用于显示精度。45/60/20/30 分钟的状态阈值仍按分钟边界判断。
+
 `sim_fast=1` 时，每个 `tick_1hz` 都当作 1 分钟；`sim_fast=0` 时，累计 60 个 `tick_1hz` 才产生 1 个分钟更新。
+
+注意：`sim_fast=1` 是为了快速仿真，秒字段固定为 `00`；上板时 `sim_fast=0`，`SIT/AWAY/NOW` 才会显示真实秒数。
 
 ## hp_engine.v
 
@@ -282,7 +293,7 @@ bits：该行 8 个像素的点阵数据
 
 例如 `bits[7]` 对应字符最左侧像素，`bits[0]` 对应字符最右侧像素。`display_renderer.v` 用它判断当前像素是不是文字笔画。
 
-当前字库只覆盖界面需要的字符：数字、空格、`-`、`:` 和若干大写字母。未覆盖字符会显示为方框，便于发现缺字。
+当前字库只覆盖界面需要的字符：数字、空格、`-`、`:` 和界面用到的大写字母，例如 `A/C/D/E/F/G/H/I/L/M/N/O/P/R/S/T/U/V/W/Y`。未覆盖字符会显示为方框，便于发现缺字。
 
 ## LCD 显示渲染输出
 
@@ -298,7 +309,9 @@ bits：该行 8 个像素的点阵数据
 | SPI 握手 | `spi_busy`, `spi_done` | 和 `st7735_spi.v` 做字节发送握手。 |
 | 显示数据 | `year/month/day/hour/minute/second` | 显示日期和时间。 |
 | 显示数据 | `seat_state` | 显示状态字符串。 |
-| 显示数据 | `sit_time_min`, `away_time_min` | 显示学习时间和离座时间。 |
+| 显示数据 | `posture_level` | 显示姿势状态字符串，和久坐状态分开。 |
+| 显示数据 | `sit_time_min/sit_time_sec`, `away_time_min/away_time_sec` | 显示学习时间、离座时间和当前状态计时器，格式为 `mmmm:ss`。 |
+| 显示数据 | `distance_cm` | 显示当前距离，格式为 `DIST xxxxCM`。 |
 | 显示数据 | `hp`, `hp_zero_alarm` | 显示 HP 数值、血条颜色和报警闪烁。 |
 
 输出给 SPI 的信号：
@@ -414,28 +427,35 @@ font_row = pix_y[2:0];  // 0..7
 
 ```text
 字符行 0：YYYY-MM-DD
-字符行 1：空
-字符行 2：HH:MM:SS
-字符行 3：空
-字符行 4：STAT IDLE / STUDY / LONG / OVER / REST / AWAY
-字符行 5：空
-字符行 6：SIT xxxxM
+字符行 1：HH:MM:SS
+字符行 2：空
+字符行 3：STAT IDLE / STUDY / LONG / OVER / REST / AWAY
+字符行 4：POST SAFE / WARN / DANGER
+字符行 5：SIT 0000:00
+字符行 6：AWAY 0000:00
 字符行 7：空
-字符行 8：AWAY xxxxM
+字符行 8：NOW 0000:00
 字符行 9：空
-字符行 10：HP xxx
-字符行 11：NOW xxxxM
-像素 y=96..107：HP 横向血条
+字符行 10：DIST 0060CM
+字符行 11：HP 100
+像素 y=112..123：HP 横向血条
 其他区域：黑色背景
 ```
 
-`NOW xxxxM` 是当前状态计时器：
+`NOW 0000:00` 是当前状态计时器：
 
-- 状态为 `ST_STUDY`、`ST_SEDENTARY`、`ST_OVER_SEDENTARY` 时，显示当前学习/入座时间 `sit_time_min`。
-- 状态为 `ST_REST`、`ST_AWAY_LONG` 时，显示当前离座时间 `away_time_min`。
-- 状态为 `ST_IDLE` 时，显示 `0000M`。
+- 状态为 `ST_STUDY`、`ST_SEDENTARY`、`ST_OVER_SEDENTARY` 时，显示当前学习/入座时间 `sit_time_min:sit_time_sec`。
+- 状态为 `ST_REST`、`ST_AWAY_LONG` 时，显示当前离座时间 `away_time_min:away_time_sec`。
+- 状态为 `ST_IDLE` 时，显示 `0000:00`。
 
-状态字符串映射：
+`DIST 0060CM` 显示当前 `distance_cm` 输入值。显示宽度固定为 4 位十进制数字，因此 60 cm 会显示为 `0060CM`，最大可覆盖 10-bit 输入的 `1023CM`。
+
+状态显示被拆成两类，避免“久坐”和“姿势不当”混在一个字段里：
+
+- `STAT` 来自 `seat_fsm.v` 的 `seat_state`，描述座位/久坐状态。
+- `POST` 来自 `hp_engine.v` 的 `posture_level`，描述距离导致的姿势状态。
+
+`STAT` 状态字符串映射：
 
 | `seat_state` | 显示字符串 |
 |---:|---|
@@ -448,16 +468,27 @@ font_row = pix_y[2:0];  // 0..7
 
 注意：状态 2 的内部名字是 `ST_SEDENTARY`，屏幕上为了节省宽度显示为 `LONG`。
 
+`POST` 姿势字符串映射：
+
+| `posture_level` | 显示字符串 | 含义 |
+|---:|---|---|
+| 0 | `SAFE` | `distance_cm > 50`，姿势距离安全 |
+| 1 | `WARN` | `30 <= distance_cm <= 50`，姿势需要注意 |
+| 2 | `DANGER` | `distance_cm < 30`，姿势不当 |
+
 ### 文字生成方式
 
 `char_at(cell_col, cell_row)` 根据字符网格位置返回当前格子应该显示的 ASCII 字符。例如：
 
 - 第 0 行返回日期字符。
-- 第 2 行返回时间字符。
-- 第 4 行返回 `STAT ` 加状态字符串。
-- 第 6 行返回 `SIT xxxxM`。
-- 第 8 行返回 `AWAY xxxxM`。
-- 第 10 行返回 `HP xxx`。
+- 第 1 行返回时间字符。
+- 第 3 行返回 `STAT ` 加状态字符串。
+- 第 4 行返回 `POST ` 加姿势字符串。
+- 第 5 行返回 `SIT 0000:00`。
+- 第 6 行返回 `AWAY 0000:00`。
+- 第 8 行返回 `NOW 0000:00`。
+- 第 10 行返回 `DIST xxxxCM`。
+- 第 11 行返回 `HP xxx`。
 
 数字不是用十进制字符串库生成的，而是在硬件中用除法和取模拆成各个位：
 
@@ -483,13 +514,13 @@ HP 血条区域是像素坐标：
 
 ```text
 x = 8..119
-y = 96..107
+y = 112..123
 ```
 
 其中边框为白色：
 
 ```text
-x=8 或 x=119 或 y=96 或 y=107
+x=8 或 x=119 或 y=112 或 y=123
 ```
 
 内部可填充宽度按 HP 比例计算：
@@ -527,27 +558,22 @@ seat_state = ST_OVER_SEDENTARY
 blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
 ```
 
-闪烁打开时：
+当前实现是全屏闪烁，不再只闪烁状态区域。闪烁打开时：
 
-- 状态区域背景变成暗红色 `16'h6000`。
-- 状态区域内的文字变成黄色 `16'hFFE0`。
-
-状态区域对应的像素 y 范围：
-
-```text
-y = 30..47
-```
+- 全屏背景变成暗红色 `16'h6000`。
+- 当前屏幕上的文字变成黄色 `16'hFFE0`。
+- HP 血条在闪烁相位中暂时被全屏报警底色覆盖，用于突出报警状态。
 
 ### 像素颜色优先级
 
 `pixel_rgb` 的组合逻辑按优先级决定当前像素颜色：
 
-1. 如果当前像素在 HP 血条区域，优先绘制血条和边框。
-2. 否则，如果当前像素是文字笔画，绘制白色或闪烁黄色文字。
-3. 否则，如果当前像素在闪烁状态区域，绘制暗红背景。
+1. 如果 `blink_on=1`，全屏进入报警闪烁：文字为黄色，背景为暗红。
+2. 否则，如果当前像素在 HP 血条区域，绘制血条和边框。
+3. 否则，如果当前像素是文字笔画，绘制白色文字。
 4. 否则绘制黑色背景。
 
-这意味着 HP 血条区域优先级最高，即使字符网格和血条区域重叠，也会先显示血条。
+这意味着报警闪烁优先级最高；正常显示时 HP 血条优先于普通文字和背景。
 
 ### 资源特点
 
@@ -625,4 +651,3 @@ ALL TESTS PASSED
 - 字库是简化 8x8 ASCII 字库。
 - RTC 没有外部校时接口。
 - LCD 初始化序列是常用最小序列，不同 ST7735S 模组可能需要增加偏移、颜色顺序或厂商初始化命令。
-

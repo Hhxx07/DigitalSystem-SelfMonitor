@@ -19,7 +19,11 @@ module display_renderer #(
     input  wire [7:0]  second,
     input  wire [2:0]  seat_state,
     input  wire [15:0] sit_time_min,
+    input  wire [5:0]  sit_time_sec,
     input  wire [15:0] away_time_min,
+    input  wire [5:0]  away_time_sec,
+    input  wire [9:0]  distance_cm,
+    input  wire [1:0]  posture_level,
     input  wire [7:0]  hp,
     input  wire        hp_zero_alarm,
     output reg         spi_start,
@@ -62,7 +66,6 @@ module display_renderer #(
     wire [7:0] char_code;
     wire [7:0] font_bits;
     wire       text_on;
-    wire       status_area;
     wire       blink_on;
     wire [15:0] hp_bar_width;
 
@@ -85,21 +88,32 @@ module display_renderer #(
     wire [3:0] sit_h   = (sit_time_min / 16'd100)  % 16'd10;
     wire [3:0] sit_t   = (sit_time_min / 16'd10)   % 16'd10;
     wire [3:0] sit_o   = sit_time_min % 16'd10;
+    wire [3:0] sit_sec_t = sit_time_sec / 6'd10;
+    wire [3:0] sit_sec_o = sit_time_sec % 6'd10;
     wire [3:0] away_th = (away_time_min / 16'd1000) % 16'd10;
     wire [3:0] away_h  = (away_time_min / 16'd100)  % 16'd10;
     wire [3:0] away_t  = (away_time_min / 16'd10)   % 16'd10;
     wire [3:0] away_o  = away_time_min % 16'd10;
+    wire [3:0] away_sec_t = away_time_sec / 6'd10;
+    wire [3:0] away_sec_o = away_time_sec % 6'd10;
     wire [15:0] active_time_min = ((seat_state == 3'd4) || (seat_state == 3'd5)) ? away_time_min :
                                   ((seat_state == 3'd0) ? 16'd0 : sit_time_min);
+    wire [5:0] active_time_sec = ((seat_state == 3'd4) || (seat_state == 3'd5)) ? away_time_sec :
+                                 ((seat_state == 3'd0) ? 6'd0 : sit_time_sec);
     wire [3:0] active_th = (active_time_min / 16'd1000) % 16'd10;
     wire [3:0] active_h  = (active_time_min / 16'd100)  % 16'd10;
     wire [3:0] active_t  = (active_time_min / 16'd10)   % 16'd10;
     wire [3:0] active_o  = active_time_min % 16'd10;
+    wire [3:0] active_sec_t = active_time_sec / 6'd10;
+    wire [3:0] active_sec_o = active_time_sec % 6'd10;
+    wire [3:0] dist_th = distance_cm / 10'd1000;
+    wire [3:0] dist_h  = (distance_cm / 10'd100) % 10'd10;
+    wire [3:0] dist_t  = (distance_cm / 10'd10)  % 10'd10;
+    wire [3:0] dist_o  = distance_cm % 10'd10;
     wire [3:0] hp_h    = hp / 8'd100;
     wire [3:0] hp_t    = (hp / 8'd10) % 8'd10;
     wire [3:0] hp_o    = hp % 8'd10;
 
-    assign status_area  = (pix_y >= 7'd30) && (pix_y < 7'd48);
     assign blink_on     = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
     assign hp_bar_width = (hp * 16'd110) / 16'd100;
     assign text_on      = font_bits[3'd7 - font_col];
@@ -148,6 +162,26 @@ module display_renderer #(
         end
     endfunction
 
+    function [7:0] posture_char;
+        input [1:0] level;
+        input [3:0] pos;
+        begin
+            posture_char = 8'h20;
+            case (level)
+                2'd0: begin // SAFE
+                    case (pos) 4'd0: posture_char = "S"; 4'd1: posture_char = "A"; 4'd2: posture_char = "F"; 4'd3: posture_char = "E"; default: posture_char = " "; endcase
+                end
+                2'd1: begin // WARN
+                    case (pos) 4'd0: posture_char = "W"; 4'd1: posture_char = "A"; 4'd2: posture_char = "R"; 4'd3: posture_char = "N"; default: posture_char = " "; endcase
+                end
+                2'd2: begin // DANGER
+                    case (pos) 4'd0: posture_char = "D"; 4'd1: posture_char = "A"; 4'd2: posture_char = "N"; 4'd3: posture_char = "G"; 4'd4: posture_char = "E"; 4'd5: posture_char = "R"; default: posture_char = " "; endcase
+                end
+                default: posture_char = " ";
+            endcase
+        end
+    endfunction
+
     function [7:0] char_at;
         input [3:0] col;
         input [3:0] row;
@@ -169,7 +203,7 @@ module display_renderer #(
                         default: char_at = " ";
                     endcase
                 end
-                4'd2: begin
+                4'd1: begin
                     case (col)
                         4'd0: char_at = ascii_digit(hour_t);
                         4'd1: char_at = ascii_digit(hour_o);
@@ -182,7 +216,7 @@ module display_renderer #(
                         default: char_at = " ";
                     endcase
                 end
-                4'd4: begin
+                4'd3: begin
                     case (col)
                         4'd0: char_at = "S";
                         4'd1: char_at = "T";
@@ -192,7 +226,17 @@ module display_renderer #(
                         default: char_at = state_char(seat_state, col - 4'd5);
                     endcase
                 end
-                4'd6: begin
+                4'd4: begin
+                    case (col)
+                        4'd0: char_at = "P";
+                        4'd1: char_at = "O";
+                        4'd2: char_at = "S";
+                        4'd3: char_at = "T";
+                        4'd4: char_at = " ";
+                        default: char_at = posture_char(posture_level, col - 4'd5);
+                    endcase
+                end
+                4'd5: begin
                     case (col)
                         4'd0: char_at = "S";
                         4'd1: char_at = "I";
@@ -202,11 +246,13 @@ module display_renderer #(
                         4'd5: char_at = ascii_digit(sit_h);
                         4'd6: char_at = ascii_digit(sit_t);
                         4'd7: char_at = ascii_digit(sit_o);
-                        4'd8: char_at = "M";
+                        4'd8: char_at = ":";
+                        4'd9: char_at = ascii_digit(sit_sec_t);
+                        4'd10: char_at = ascii_digit(sit_sec_o);
                         default: char_at = " ";
                     endcase
                 end
-                4'd8: begin
+                4'd6: begin
                     case (col)
                         4'd0: char_at = "A";
                         4'd1: char_at = "W";
@@ -217,22 +263,13 @@ module display_renderer #(
                         4'd6: char_at = ascii_digit(away_h);
                         4'd7: char_at = ascii_digit(away_t);
                         4'd8: char_at = ascii_digit(away_o);
-                        4'd9: char_at = "M";
+                        4'd9: char_at = ":";
+                        4'd10: char_at = ascii_digit(away_sec_t);
+                        4'd11: char_at = ascii_digit(away_sec_o);
                         default: char_at = " ";
                     endcase
                 end
-                4'd10: begin
-                    case (col)
-                        4'd0: char_at = "H";
-                        4'd1: char_at = "P";
-                        4'd2: char_at = " ";
-                        4'd3: char_at = ascii_digit(hp_h);
-                        4'd4: char_at = ascii_digit(hp_t);
-                        4'd5: char_at = ascii_digit(hp_o);
-                        default: char_at = " ";
-                    endcase
-                end
-                4'd11: begin
+                4'd8: begin
                     case (col)
                         4'd0: char_at = "N";
                         4'd1: char_at = "O";
@@ -242,7 +279,36 @@ module display_renderer #(
                         4'd5: char_at = ascii_digit(active_h);
                         4'd6: char_at = ascii_digit(active_t);
                         4'd7: char_at = ascii_digit(active_o);
-                        4'd8: char_at = "M";
+                        4'd8: char_at = ":";
+                        4'd9: char_at = ascii_digit(active_sec_t);
+                        4'd10: char_at = ascii_digit(active_sec_o);
+                        default: char_at = " ";
+                    endcase
+                end
+                4'd10: begin
+                    case (col)
+                        4'd0: char_at = "D";
+                        4'd1: char_at = "I";
+                        4'd2: char_at = "S";
+                        4'd3: char_at = "T";
+                        4'd4: char_at = " ";
+                        4'd5: char_at = ascii_digit(dist_th);
+                        4'd6: char_at = ascii_digit(dist_h);
+                        4'd7: char_at = ascii_digit(dist_t);
+                        4'd8: char_at = ascii_digit(dist_o);
+                        4'd9: char_at = "C";
+                        4'd10: char_at = "M";
+                        default: char_at = " ";
+                    endcase
+                end
+                4'd11: begin
+                    case (col)
+                        4'd0: char_at = "H";
+                        4'd1: char_at = "P";
+                        4'd2: char_at = " ";
+                        4'd3: char_at = ascii_digit(hp_h);
+                        4'd4: char_at = ascii_digit(hp_t);
+                        4'd5: char_at = ascii_digit(hp_o);
                         default: char_at = " ";
                     endcase
                 end
@@ -284,8 +350,13 @@ module display_renderer #(
     always @(*) begin
         pixel_rgb = C_BLACK;
 
-        if ((pix_x >= 7'd8) && (pix_x < 7'd120) && (pix_y >= 7'd96) && (pix_y < 7'd108)) begin
-            if ((pix_x == 7'd8) || (pix_x == 7'd119) || (pix_y == 7'd96) || (pix_y == 7'd107)) begin
+        if (blink_on) begin
+            if (text_on)
+                pixel_rgb = C_YELLOW;
+            else
+                pixel_rgb = C_DARK_RED;
+        end else if ((pix_x >= 7'd8) && (pix_x < 7'd120) && (pix_y >= 7'd112) && (pix_y < 7'd124)) begin
+            if ((pix_x == 7'd8) || (pix_x == 7'd119) || (pix_y == 7'd112) || (pix_y == 7'd123)) begin
                 pixel_rgb = C_WHITE;
             end else if ((pix_x - 7'd9) < hp_bar_width[6:0]) begin
                 if (hp >= 8'd70)
@@ -298,12 +369,7 @@ module display_renderer #(
                 pixel_rgb = C_GRAY;
             end
         end else if (text_on) begin
-            if (status_area && blink_on)
-                pixel_rgb = C_YELLOW;
-            else
-                pixel_rgb = C_WHITE;
-        end else if (status_area && blink_on) begin
-            pixel_rgb = C_DARK_RED;
+            pixel_rgb = C_WHITE;
         end else begin
             pixel_rgb = C_BLACK;
         end

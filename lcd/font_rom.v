@@ -64,6 +64,10 @@ module font_rom(
                 3'd0: bits = 8'h18; 3'd1: bits = 8'h24; 3'd2: bits = 8'h42; 3'd3: bits = 8'h7E;
                 3'd4: bits = 8'h42; 3'd5: bits = 8'h42; 3'd6: bits = 8'h42; default: bits = 8'h00;
             endcase
+            8'h43: case (row) // C
+                3'd0: bits = 8'h3C; 3'd1: bits = 8'h66; 3'd2: bits = 8'h60; 3'd3: bits = 8'h60;
+                3'd4: bits = 8'h60; 3'd5: bits = 8'h66; 3'd6: bits = 8'h3C; default: bits = 8'h00;
+            endcase
             8'h44: case (row) // D
                 3'd0: bits = 8'h78; 3'd1: bits = 8'h44; 3'd2: bits = 8'h42; 3'd3: bits = 8'h42;
                 3'd4: bits = 8'h42; 3'd5: bits = 8'h44; 3'd6: bits = 8'h78; default: bits = 8'h00;
@@ -71,6 +75,10 @@ module font_rom(
             8'h45: case (row) // E
                 3'd0: bits = 8'h7E; 3'd1: bits = 8'h60; 3'd2: bits = 8'h60; 3'd3: bits = 8'h7C;
                 3'd4: bits = 8'h60; 3'd5: bits = 8'h60; 3'd6: bits = 8'h7E; default: bits = 8'h00;
+            endcase
+            8'h46: case (row) // F
+                3'd0: bits = 8'h7E; 3'd1: bits = 8'h60; 3'd2: bits = 8'h60; 3'd3: bits = 8'h7C;
+                3'd4: bits = 8'h60; 3'd5: bits = 8'h60; 3'd6: bits = 8'h60; default: bits = 8'h00;
             endcase
             8'h47: case (row) // G
                 3'd0: bits = 8'h3C; 3'd1: bits = 8'h66; 3'd2: bits = 8'h60; 3'd3: bits = 8'h6E;

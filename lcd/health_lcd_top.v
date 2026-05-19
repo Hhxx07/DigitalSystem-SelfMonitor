@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 module health_lcd_top #(
-    parameter integer CLK_HZ     = 1000000,
+    parameter integer CLK_HZ     = 100000000,
     parameter integer SPI_CLK_DIV = 5,
     parameter integer FRAME_HZ   = 2,
     parameter integer INIT_YEAR  = 2026,
@@ -42,7 +42,9 @@ module health_lcd_top #(
 
     wire [2:0]  seat_state;
     wire [15:0] sit_time_min;
+    wire [5:0]  sit_time_sec;
     wire [15:0] away_time_min;
+    wire [5:0]  away_time_sec;
     wire [7:0]  hp_value;
     wire        hp_zero_alarm;
     wire [1:0]  posture_level;
@@ -96,7 +98,9 @@ module health_lcd_top #(
         .seated(seated),
         .state(seat_state),
         .sit_time_min(sit_time_min),
+        .sit_time_sec(sit_time_sec),
         .away_time_min(away_time_min),
+        .away_time_sec(away_time_sec),
         .sim_fast(sim_fast)
     );
 
@@ -150,7 +154,11 @@ module health_lcd_top #(
         .second(second),
         .seat_state(seat_state),
         .sit_time_min(sit_time_min),
+        .sit_time_sec(sit_time_sec),
         .away_time_min(away_time_min),
+        .away_time_sec(away_time_sec),
+        .distance_cm(distance_cm),
+        .posture_level(posture_level),
         .hp(hp_value),
         .hp_zero_alarm(hp_zero_alarm),
         .spi_start(render_spi_start),
