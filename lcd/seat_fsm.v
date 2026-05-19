@@ -1,12 +1,11 @@
 `timescale 1ns / 1ps
 
-module seat_fsm #(
-    parameter integer SIM_FAST = 0
-)(
+module seat_fsm (
     input  wire       clk,
     input  wire       rst_n,
     input  wire       tick_1hz,
     input  wire       seated,
+    input  wire       sim_fast,
     output reg [2:0]  state,
     output reg [15:0] sit_time_min,
     output reg [15:0] away_time_min
@@ -34,7 +33,7 @@ module seat_fsm #(
         end else begin
             minute_tick <= 1'b0;
             if (tick_1hz) begin
-                if (SIM_FAST != 0) begin
+                if (sim_fast != 0) begin
                     minute_tick <= 1'b1;
                 end else if (sec_cnt == 6'd59) begin
                     sec_cnt     <= 6'd0;
@@ -60,20 +59,25 @@ module seat_fsm #(
              * State policy:
              * - While seated, sit_time_min is continuous seated time.
              * - Leaving after any valid seated period enters REST/AWAY_LONG by away time.
-             * - Returning within 3 minutes clears the sitting timer and restarts STUDY.
+             * - Returning after more than 3 away minutes clears the sitting timer
+             *   and restarts STUDY; returning within 3 minutes keeps the old timer.
              * - Away for 30 minutes returns to IDLE and clears the sitting timer.
              */
             if (seated && !prev_seated) begin
                 has_sat_once  <= 1'b1;
                 away_time_min <= 16'd0;
-                if (away_time_min <= 16'd3)
+                if (away_time_min > 16'd3) begin
                     sit_time_min <= 16'd0;
-                if (sit_time_min >= 16'd60)
+                    state        <= ST_STUDY;
+                end else if (sit_time_min >= 16'd60) begin
                     state <= ST_OVER_SEDENTARY;
-                else if (sit_time_min >= 16'd45)
+                end else if (sit_time_min >= 16'd45) begin
                     state <= ST_SEDENTARY;
-                else
+                end else begin
                     state <= ST_STUDY;
+                end
+            end else if (!seated && prev_seated && has_sat_once) begin
+                state <= ST_REST;
             end
 
             if (minute_tick) begin

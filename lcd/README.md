@@ -1,25 +1,25 @@
-# ST7735S 健康坐姿 LCD 显示系统说明
+﻿# ST7735S 健康坐姿 LCD 显示系统说明
 
-本目录是一套面向 Xilinx Artix-7 / EGO1 FPGA 的 Verilog-2001 工程代码，用 4-wire SPI 驱动 1.44 inch 128x128 ST7735S TFT LCD，并显示日期、时间、久坐状态、学习/离座计时、HP 数值和 HP 血条。
+本目录是一套基于 Verilog-2001 的 LCD 显示系统，用于 Xilinx Artix-7 / EGO1 FPGA，驱动 1.44 inch、128x128、ST7735S 控制器的 TFT LCD。LCD 通信方式为 4-wire SPI，只写不读，像素格式为 RGB565。
 
-默认输入时钟按 100 MHz 设计，LCD SPI 写时钟默认约 10 MHz，像素格式为 RGB565。
+系统显示内容包括日期、时间、座位状态、学习计时、离座计时、HP 数值和 HP 横向血条。
 
 ## 文件关系
 
-顶层模块是 `health_lcd_top.v`，它负责把业务逻辑、LCD 初始化、显示渲染和 SPI 发送模块连接起来。
+顶层文件是 `health_lcd_top.v`。它把 RTC、座位状态机、HP 计算、LCD 初始化、LCD 渲染和 SPI 字节发送模块连接起来。
 
 ```text
 health_lcd_top.v
-├── rtc_clock.v          100 MHz 分频生成 1 Hz tick，并维护年月日时分秒
-├── seat_fsm.v           根据 pressure_ok/ir_ok 计算 seated、状态、学习/离座分钟数
-├── hp_engine.v          根据 seated 和 distance_cm 每分钟更新 HP
-├── st7735_init.v        上电复位 LCD，并发送 ST7735S 初始化命令序列
-├── display_renderer.v   init_done 后周期性整屏刷新 128x128 RGB565 图像
-│   └── font_rom.v       8x8 ASCII 字模，用于日期、时间、状态等文本绘制
-└── st7735_spi.v         低层 SPI 字节发送器，只写 MOSI，不读 MISO
+├── rtc_clock.v          产生 1 Hz tick，并维护年月日时分秒
+├── seat_fsm.v           维护座位状态、学习时间和离座时间
+├── hp_engine.v          根据距离和入座状态更新 HP
+├── st7735_init.v        复位并初始化 ST7735S LCD
+├── display_renderer.v   生成整屏 128x128 RGB565 显示数据
+│   └── font_rom.v       8x8 ASCII 字模 ROM
+└── st7735_spi.v         低层 SPI 8-bit 字节发送器
 ```
 
-`st7735_init.v` 和 `display_renderer.v` 都会产生 SPI 发送请求。顶层通过 `init_done` 做简单仲裁：
+`st7735_init.v` 和 `display_renderer.v` 都会向 SPI 模块发起发送请求，但二者不会同时工作。顶层用 `init_done` 做仲裁：
 
 ```verilog
 assign spi_start_mux = init_done ? render_spi_start : init_spi_start;
@@ -27,23 +27,33 @@ assign spi_dc_mux    = init_done ? render_spi_dc    : init_spi_dc;
 assign spi_data_mux  = init_done ? render_spi_data  : init_spi_data;
 ```
 
-也就是说：
+系统启动后先执行 LCD 初始化；初始化完成后，SPI 通道切换给显示渲染模块，开始周期性刷新整屏。
 
-1. 上电后先由 `st7735_init.v` 独占 SPI，完成 LCD 复位和初始化。
-2. `init_done=1` 后，切换到 `display_renderer.v`，开始周期性刷新整屏。
-3. 真正驱动 `lcd_cs_n/lcd_dc/lcd_scl/lcd_mosi` 的只有 `st7735_spi.v`。
+## 顶层模块
 
-## 顶层：health_lcd_top.v
-
-顶层接口按题目要求实现：
+当前顶层接口在 `health_lcd_top.v` 中定义如下：
 
 ```verilog
-module health_lcd_top(
+module health_lcd_top #(
+    parameter integer CLK_HZ      = 1000000,
+    parameter integer SPI_CLK_DIV = 5,
+    parameter integer FRAME_HZ    = 2,
+    parameter integer INIT_YEAR   = 2026,
+    parameter integer INIT_MONTH  = 1,
+    parameter integer INIT_DAY    = 1,
+    parameter integer INIT_HOUR   = 0,
+    parameter integer INIT_MIN    = 0,
+    parameter integer INIT_SEC    = 0,
+    parameter [7:0]   MADCTL_PARAM = 8'h00,
+    parameter [15:0]  LCD_X_OFFSET = 16'd2,
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1
+)(
     input  wire clk,
     input  wire rst_n,
     input  wire pressure_ok,
     input  wire ir_ok,
     input  wire [9:0] distance_cm,
+    input  wire sim_fast,
     output wire lcd_cs_n,
     output wire lcd_rst_n,
     output wire lcd_dc,
@@ -53,282 +63,525 @@ module health_lcd_top(
 );
 ```
 
-实现内容：
+端口说明：
 
-- `seated = pressure_ok & ir_ok`，作为入座判断。
-- 实例化 RTC、座位状态机、HP 引擎、LCD 初始化器、显示渲染器和 SPI 字节发送器。
-- `lcd_blk` 固定输出高电平，默认打开背光。
-- 用参数控制工程行为：
-  - `CLK_HZ`：输入时钟频率，默认 `100000000`。
-  - `SPI_CLK_DIV`：SPI 半周期分频，默认 `5`，100 MHz 下 SCL 约 10 MHz。
-  - `FRAME_HZ`：显示刷新目标帧率，默认 `2`。
-  - `SIM_FAST`：仿真加速，`1` 时 1 秒当 1 分钟。
-  - `INIT_YEAR/MONTH/DAY/HOUR/MIN/SEC`：RTC 初始时间。
-  - `MADCTL_PARAM`：ST7735S 屏幕方向参数。
+| 端口名 | 方向 | 位宽 | 说明 |
+|---|---:|---:|---|
+| `clk` | input | 1 | 系统主时钟。所有模块都在这个时钟下同步运行。上板使用 100 MHz 时，应把 `CLK_HZ` 参数设为 `100000000`。 |
+| `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
+| `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
+| `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
+| `distance_cm` | input | 10 | 距离输入，按厘米理解。HP 模块用它判断 SAFE/WARN/DANGER 坐姿等级。 |
+| `sim_fast` | input | 1 | 仿真加速开关。为 1 时，`seat_fsm.v` 和 `hp_engine.v` 把 1 秒当作 1 分钟；上板时应接 0。 |
+| `lcd_cs_n` | output | 1 | LCD SPI 片选，低有效。发送一个字节期间拉低。 |
+| `lcd_rst_n` | output | 1 | LCD 硬件复位，低有效。由 `st7735_init.v` 控制。 |
+| `lcd_dc` | output | 1 | LCD 命令/数据选择。0 表示 command，1 表示 data。 |
+| `lcd_scl` | output | 1 | LCD SPI 时钟。`SPI_CLK_DIV=5` 且 `clk=100MHz` 时约为 10 MHz。 |
+| `lcd_mosi` | output | 1 | LCD SPI 数据线，MSB first，只写。 |
+| `lcd_blk` | output | 1 | LCD 背光控制。当前固定输出 1，默认背光高有效。 |
 
-## RTC：rtc_clock.v
+顶层内部把压力和红外两个判断合成入座信号：
 
-`rtc_clock.v` 做两件事：
+```verilog
+assign seated = pressure_ok & ir_ok;
+```
 
-1. 从输入时钟分频得到 `tick_1hz`。
-2. 用这个 1 Hz tick 推进年月日时分秒。
+只有两个输入都为 1，系统才认为用户处于入座状态。`seated` 同时送到 `seat_fsm.v` 和 `hp_engine.v`。
 
-核心机制：
+## 参数说明
+
+| 参数 | 当前默认值 | 用途 |
+|---|---:|---|
+| `CLK_HZ` | `1000000` | 系统时钟频率参数。当前文件默认是 1 MHz，仿真更快；EGO1 100 MHz 上板时建议改成 `100000000`。 |
+| `SPI_CLK_DIV` | `5` | SPI SCL 半周期分频值。SCL 频率约等于 `CLK_HZ / (2 * SPI_CLK_DIV)`。 |
+| `FRAME_HZ` | `2` | LCD 整屏刷新目标帧率。 |
+| `INIT_YEAR` 等 | 见代码 | RTC 复位后的初始时间。 |
+| `MADCTL_PARAM` | `8'h00` | ST7735S 屏幕方向参数。方向不对时优先改这个值。 |
+| `LCD_X_OFFSET` | `16'd2` | LCD GRAM 列地址偏移。当前用于修正画面向左偏 2 个像素的问题。 |
+| `LCD_Y_OFFSET` | `16'd1` | LCD GRAM 行地址偏移。当前用于修正画面向上偏 1 个像素的问题。 |
+
+## LCD 画面偏移修正
+
+如果实际 LCD 上显示画面整体向左或向上偏移，通常不是 `pix_x/pix_y` 的像素扫描写错，而是 ST7735S 模组的可视区域和控制器内部 GRAM 地址原点有偏移。
+
+当前代码原本按下面的窗口写屏：
+
+```text
+CASET 0..127
+RASET 0..127
+```
+
+你的屏幕实际表现为画面向左偏 2 个像素、向上偏 1 个像素，因此需要把 LCD 写入窗口改成：
+
+```text
+CASET 2..129
+RASET 1..128
+```
+
+对应参数就是：
+
+```verilog
+parameter [15:0] LCD_X_OFFSET = 16'd2;
+parameter [15:0] LCD_Y_OFFSET = 16'd1;
+```
+
+这两个参数同时传给：
+
+- `st7735_init.v`：初始化阶段设置一次窗口，保持配置一致。
+- `display_renderer.v`：每一帧刷新前重新发送 `CASET/RASET/RAMWR`，这是实际决定画面位置的地方。
+
+如果后续换了另一个 ST7735S 模组，偏移可能不同。调整原则是：
+
+- 画面向左偏 N 个像素：增大 `LCD_X_OFFSET` N。
+- 画面向上偏 N 个像素：增大 `LCD_Y_OFFSET` N。
+- 画面向右偏 N 个像素：减小 `LCD_X_OFFSET` N。
+- 画面向下偏 N 个像素：减小 `LCD_Y_OFFSET` N。
+
+## 各文件功能
+
+## rtc_clock.v
+
+`rtc_clock.v` 负责产生 `tick_1hz`，并维护当前日期时间。
+
+实现方式：
 
 - `div_cnt` 从 0 计数到 `CLK_HZ-1`。
-- 到达终点时：
-  - `tick_1hz` 拉高一个 `clk` 周期。
-  - 调用 `step_one_second` 任务，让秒数加 1。
+- 计满后输出一个时钟周期的 `tick_1hz`。
+- 每次 `tick_1hz` 到来时，调用 `step_one_second` 推进 1 秒。
+- 秒、分、时、日、月、年逐级进位。
+- `days_in_month` 判断每个月天数。
+- `is_leap_year` 支持闰年判断。
 
-日历进位：
+输出包括：
 
-- 秒满 59 进分钟。
-- 分钟满 59 进小时。
-- 小时满 23 进日期。
-- 日期根据 `days_in_month(year, month)` 判断每月天数。
-- 2 月通过 `is_leap_year` 支持闰年：
-  - 能被 400 整除是闰年。
-  - 能被 100 整除不是闰年。
-  - 能被 4 整除是闰年。
+```text
+year, month, day, hour, minute, second
+```
 
-注意：RTC 没有外部校时接口，时间只在复位后从参数指定的初始时间开始走。
+这些时间信号会直接送到 `display_renderer.v`，用于显示日期和时间。
 
-## 座位状态机：seat_fsm.v
+## seat_fsm.v
 
-`seat_fsm.v` 根据 `seated` 和分钟 tick 维护：
-
-- `state`
-- `sit_time_min`
-- `away_time_min`
+`seat_fsm.v` 维护座位状态机。
 
 状态编码：
 
 ```text
-0 = IDLE / 空闲
-1 = STUDY / 学习中
-2 = SEDENTARY / 久坐
-3 = OVER_SEDENTARY / 过度久坐
-4 = REST / 休息
-5 = AWAY_LONG / 离开较久
+0 = ST_IDLE           空闲，座位没有归属
+1 = ST_STUDY          学习中
+2 = ST_SEDENTARY      久坐
+3 = ST_OVER_SEDENTARY 过度久坐
+4 = ST_REST           休息 / 中途离开
+5 = ST_AWAY_LONG      长时间离开
 ```
 
-分钟 tick 生成方式：
+核心规则：
 
-- 正常模式：累计 60 个 `tick_1hz` 得到 1 个分钟 tick。
-- `SIM_FAST=1`：每个 `tick_1hz` 都当作 1 分钟，用于快速仿真。
+- 坐下后开始计时，进入 `ST_STUDY`。
+- 坐下时间达到 45 分钟后进入 `ST_SEDENTARY`。
+- 坐下时间达到 60 分钟后进入 `ST_OVER_SEDENTARY`。
+- 中途离开后进入 `ST_REST`，并开始累计 `away_time_min`。
+- 离开时间超过 3 分钟后再回来，认为是有效休息，清空 `sit_time_min`，重新开始学习计时。
+- 离开 3 分钟内回来，不认为是有效休息，继续之前的 `sit_time_min`。
+- 离开达到 20 分钟进入 `ST_AWAY_LONG`。
+- 离开达到 30 分钟进入 `ST_IDLE`，清空座位所有权和学习计时。
 
-状态规则：
+`sim_fast=1` 时，每个 `tick_1hz` 都当作 1 分钟；`sim_fast=0` 时，累计 60 个 `tick_1hz` 才产生 1 个分钟更新。
 
-- `seated=1` 时：
-  - `away_time_min` 清零。
-  - `sit_time_min` 每分钟加 1。
-  - 小于 45 分钟：`STUDY`。
-  - 达到 45 分钟：`SEDENTARY`。
-  - 达到 60 分钟：`OVER_SEDENTARY`。
+## hp_engine.v
 
-- 曾经入座后离开：
-  - `away_time_min < 20`：`REST`。
-  - `20 <= away_time_min < 30`：`AWAY_LONG`。
-  - `away_time_min >= 30`：回到 `IDLE`，清空 `sit_time_min` 和离座记录。
-
-- 离座 3 分钟内返回：
-  - 清空 `sit_time_min`，重新从 `STUDY` 开始计时。
-
-实现上使用 `has_sat_once` 区分“从未入座的 IDLE”和“曾经入座后离开”的情况。
-
-## HP 引擎：hp_engine.v
-
-`hp_engine.v` 根据坐姿距离每分钟更新 HP。
+`hp_engine.v` 根据入座状态和距离更新 HP。
 
 输出：
 
 - `hp`：0 到 100，饱和加减。
-- `hp_zero_alarm`：`hp==0` 时为 1。
-- `posture_level`：
-  - `0 = SAFE`
-  - `1 = WARN`
-  - `2 = DANGER`
+- `hp_zero_alarm`：HP 为 0 时拉高。
+- `posture_level`：坐姿等级。
 
 规则：
 
-- 只有 `seated=1` 时才更新 HP。
-- `distance_cm > 50`：每分钟 `+1`，最大 100。
-- `30 <= distance_cm <= 50`：每分钟 `-1`，最小 0。
-- `distance_cm < 30`：每分钟 `-3`，最小 0。
-
-和 `seat_fsm.v` 一样，`SIM_FAST=1` 时 1 秒当 1 分钟。
-
-## SPI 字节发送器：st7735_spi.v
-
-`st7735_spi.v` 是底层 LCD SPI 写模块，只负责发送 8-bit byte。
-
-接口含义：
-
-- `start`：发送请求，空闲时拉高 1 个周期即可。
-- `dc`：本字节类型，`0` 表示 command，`1` 表示 data。
-- `data`：待发送字节。
-- `busy`：正在发送。
-- `done`：一个字节发送完成后拉高 1 个周期。
-- `lcd_cs_n`：片选，发送期间为低。
-- `lcd_scl`：SPI 时钟。
-- `lcd_mosi`：SPI 数据，MSB first。
-
-时序实现：
-
-- 空闲时 `lcd_cs_n=1`，`lcd_scl=0`。
-- 收到 `start` 后：
-  - 锁存 `data` 和 `dc`。
-  - `lcd_cs_n` 拉低。
-  - 先输出最高位 `data[7]`。
-- 每 `CLK_DIV` 个系统时钟翻转一次 `lcd_scl`。
-- 在 SCL 上升沿期间 LCD 采样当前 MOSI。
-- 在 SCL 下降沿后准备下一位。
-- 8 位发送完毕后释放 `CS`，产生 `done`。
-
-默认 `CLK_DIV=5` 时，100 MHz 输入下：
-
 ```text
-SCL 半周期 = 5 * 10 ns = 50 ns
-SCL 周期   = 100 ns
-SPI 频率   = 10 MHz
+seated=0：HP 不更新
+seated=1 且 distance_cm > 50：每分钟 HP +1，最大 100
+seated=1 且 30 <= distance_cm <= 50：每分钟 HP -1，最小 0
+seated=1 且 distance_cm < 30：每分钟 HP -3，最小 0
 ```
 
-## LCD 初始化：st7735_init.v
-
-`st7735_init.v` 完成 LCD 上电复位和 ST7735S 初始化序列。
-
-复位流程：
-
-1. `lcd_rst_n=0` 保持约 20 ms。
-2. `lcd_rst_n=1` 后等待约 120 ms。
-3. 开始发送初始化命令。
-
-初始化命令序列：
+坐姿等级：
 
 ```text
-SWRESET 0x01
-SLPOUT  0x11
-COLMOD  0x3A, 0x05
-MADCTL  0x36, MADCTL_PARAM
-CASET   0x2A, 0, 0, 0, 127
-RASET   0x2B, 0, 0, 0, 127
-NORON   0x13
-DISPON  0x29
+0 = SAFE
+1 = WARN
+2 = DANGER
 ```
 
-实现方式：
+和 `seat_fsm.v` 一样，`sim_fast=1` 用于快速仿真。
 
-- 用 `seq_idx` 遍历命令/数据表。
-- `seq_data(seq_idx)` 返回当前字节。
-- `seq_dc(seq_idx)` 返回当前字节是命令还是数据。
-- `delay_after(seq_idx)` 为 `SWRESET`、`SLPOUT`、`DISPON` 后插入必要延时。
-- 每个字节通过 `spi_start/spi_dc/spi_data` 请求 `st7735_spi.v` 发送。
-- 等到 `spi_done` 后进入下一个字节。
-- 全部完成后 `init_done=1`。
+## st7735_spi.v
 
-## 显示渲染：display_renderer.v
+`st7735_spi.v` 是底层 SPI 发送模块。它一次只发送 1 个 8-bit 字节。
 
-`display_renderer.v` 在 `init_done=1` 后周期性刷新整屏。
+接口行为：
 
-刷新流程：
+- `start=1` 且模块空闲时，锁存 `dc` 和 `data`。
+- `lcd_cs_n` 拉低，开始发送。
+- `lcd_dc` 输出当前字节类型。
+- `lcd_mosi` 按 MSB first 输出。
+- `lcd_scl` 按 `SPI_CLK_DIV` 分频翻转。
+- 8 bit 发送完成后，`lcd_cs_n` 拉高，`done` 输出一个时钟周期。
 
-1. 等待 `FRAME_PERIOD = CLK_HZ / FRAME_HZ`。
-2. 发送窗口设置：
-   - `CASET 0..127`
-   - `RASET 0..127`
-   - `RAMWR`
-3. 从 `(0,0)` 到 `(127,127)` 逐像素生成 RGB565 颜色。
-4. 每个像素发送高 8 位和低 8 位，共 32768 个数据字节。
-5. 一帧结束后回到等待状态。
+`dc` 的含义：
 
-显示内容：
+```text
+dc = 0：当前字节是 LCD command
+dc = 1：当前字节是 LCD data
+```
 
-- 第 0 行字符：日期 `YYYY-MM-DD`
-- 第 2 行字符：时间 `HH:MM:SS`
-- 第 4 行字符：状态 `IDLE/STUDY/LONG/OVER/REST/AWAY`
-- 第 6 行字符：学习时间 `SIT xxxxM`
-- 第 8 行字符：离座时间 `AWAY xxxxM`
-- 第 10 行字符：HP 数值 `HP xxx`
-- 屏幕下方：HP 横向血条
+## st7735_init.v
 
-颜色规则：
+`st7735_init.v` 负责 LCD 上电初始化。
 
-- 背景：黑色。
-- 文本：白色。
-- HP 血条：
-  - `HP >= 70`：绿色。
-  - `30 <= HP < 70`：黄色。
-  - `HP < 30`：红色。
-- `hp_zero_alarm=1` 或状态为 `OVER_SEDENTARY` 时：
-  - 状态区域按 `second[0]` 闪烁。
-  - 闪烁时状态文字变黄，区域背景变暗红。
+流程：
 
-文字实现：
+1. 拉低 `lcd_rst_n`，保持复位。
+2. 拉高 `lcd_rst_n`，等待 LCD 内部稳定。
+3. 通过 SPI 发送初始化命令。
+4. 完成后输出 `init_done=1`。
 
-- 屏幕按 8x8 字符网格处理。
-- `pix_x[6:3]` 是字符列。
-- `pix_y[6:3]` 是字符行。
-- `pix_x[2:0]` 和 `pix_y[2:0]` 是字符内部像素坐标。
-- `char_at(col,row)` 根据当前字符格返回 ASCII。
-- `font_rom.v` 根据 ASCII 和字体行返回 8 位点阵。
-- 如果当前字体 bit 为 1，则输出文字颜色。
+初始化序列：
 
-这是一种“边扫描边生成像素”的实现，没有使用帧缓存 RAM，资源占用较低。
+```text
+0x01              SWRESET
+0x11              SLPOUT
+0x3A, 0x05        COLMOD，设置 RGB565
+0x36, MADCTL      MADCTL，设置方向
+0x2A, 0,0,0,127   CASET，列地址 0..127
+0x2B, 0,0,0,127   RASET，行地址 0..127
+0x13              NORON
+0x29              DISPON
+```
 
-## 字库：font_rom.v
+`seq_data(seq_idx)` 保存每一步要发送的字节，`seq_dc(seq_idx)` 指出该字节是命令还是数据，`delay_after(seq_idx)` 在关键命令后插入等待时间。
 
-`font_rom.v` 是组合逻辑 ROM，输入：
+## font_rom.v
 
-- `ascii`：ASCII 字符。
-- `row`：字符内部第几行，0 到 7。
+`font_rom.v` 是组合逻辑字模 ROM。
+
+输入：
+
+```text
+ascii：要显示的 ASCII 字符
+row：该字符内部第几行，范围 0..7
+```
 
 输出：
 
-- `bits`：该行 8 个像素点。
-
-当前字库覆盖了本工程显示需要的字符：
-
-- 数字 `0` 到 `9`
-- `-`
-- `:`
-- 空格
-- 状态和标签用到的大写字母，例如 `A/D/E/G/H/I/L/M/N/O/P/R/S/T/U/V/W/Y`
-
-未支持的字符会显示为一个简单方框，便于发现字库缺字。
-
-## Testbench：tb_health_lcd_top.v
-
-testbench 用于快速验证主要行为，不直接验证 LCD 图像内容。
-
-仿真参数：
-
-```verilog
-.CLK_HZ(1000),
-.SPI_CLK_DIV(1),
-.FRAME_HZ(2),
-.SIM_FAST(1)
+```text
+bits：该行 8 个像素的点阵数据
 ```
 
-这样做的原因：
+例如 `bits[7]` 对应字符最左侧像素，`bits[0]` 对应字符最右侧像素。`display_renderer.v` 用它判断当前像素是不是文字笔画。
 
-- `CLK_HZ=1000`：让 1 Hz tick 在仿真中更快产生。
-- `SPI_CLK_DIV=1`：加快 LCD 初始化字节发送。
-- `SIM_FAST=1`：1 秒当 1 分钟，可以快速跑到 45/60 分钟阈值。
+当前字库只覆盖界面需要的字符：数字、空格、`-`、`:` 和若干大写字母。未覆盖字符会显示为方框，便于发现缺字。
 
-验证项：
+## LCD 显示渲染输出
 
-- LCD 初始化完成，`init_done=1`。
-- `lcd_blk=1`。
-- HP 在安全区保持 100 饱和。
-- HP 在警戒区每分钟 -1。
-- HP 在危险区每分钟 -3。
-- HP 下降到 0 后饱和，并触发 `hp_zero_alarm`。
-- 入座 45 分钟进入 `SEDENTARY`。
-- 入座 60 分钟进入 `OVER_SEDENTARY`。
-- 离座 20 分钟进入 `AWAY_LONG`。
-- 离座 30 分钟回到 `IDLE`，并清空 `sit_time_min`。
+本节对应 `display_renderer.v`，它是 LCD 画面生成的核心。
 
-运行方式：
+### 渲染模块输入输出
+
+输入信号分为三类：
+
+| 类型 | 信号 | 作用 |
+|---|---|---|
+| 控制 | `clk`, `rst_n`, `init_done` | 控制渲染状态机运行。只有 `init_done=1` 后才刷新画面。 |
+| SPI 握手 | `spi_busy`, `spi_done` | 和 `st7735_spi.v` 做字节发送握手。 |
+| 显示数据 | `year/month/day/hour/minute/second` | 显示日期和时间。 |
+| 显示数据 | `seat_state` | 显示状态字符串。 |
+| 显示数据 | `sit_time_min`, `away_time_min` | 显示学习时间和离座时间。 |
+| 显示数据 | `hp`, `hp_zero_alarm` | 显示 HP 数值、血条颜色和报警闪烁。 |
+
+输出给 SPI 的信号：
+
+| 信号 | 作用 |
+|---|---|
+| `spi_start` | 请求发送一个字节。 |
+| `spi_dc` | 当前字节是命令还是数据。 |
+| `spi_data` | 当前要发送的 8-bit 字节。 |
+
+渲染模块不直接驱动 LCD 引脚，它只产生 SPI 字节请求。真正的引脚波形仍由 `st7735_spi.v` 输出。
+
+### 屏幕坐标和像素扫描
+
+LCD 分辨率是 128x128。渲染器内部用两个 7-bit 计数器扫描全屏：
+
+```verilog
+reg [6:0] pix_x;
+reg [6:0] pix_y;
+```
+
+扫描顺序是从左到右、从上到下：
+
+```text
+(0,0)   -> (1,0)   -> ... -> (127,0)
+(0,1)   -> (1,1)   -> ... -> (127,1)
+...
+(0,127) -> (1,127) -> ... -> (127,127)
+```
+
+每个像素生成一个 16-bit RGB565 颜色：
+
+```verilog
+reg [15:0] pixel_rgb;
+```
+
+随后分两次通过 SPI 发给 LCD：
+
+```text
+先发 pixel_rgb[15:8]
+再发 pixel_rgb[7:0]
+```
+
+因此一帧完整画面需要发送：
+
+```text
+128 * 128 = 16384 个像素
+16384 * 2 = 32768 个像素数据字节
+```
+
+### 一帧刷新流程
+
+渲染状态机有 5 个状态：
+
+```text
+R_IDLE      等待下一帧刷新时间
+R_SEQ_SEND  发送窗口设置命令或数据
+R_SEQ_WAIT  等待当前窗口设置字节发送完成
+R_PIX_SEND  发送当前像素的高字节或低字节
+R_PIX_WAIT  等待当前像素字节发送完成
+```
+
+完整流程：
+
+1. `R_IDLE` 中等待 `FRAME_PERIOD = CLK_HZ / FRAME_HZ`。
+2. 到达刷新周期后，发送窗口设置序列。
+3. 设置列地址 `CASET 0..127`。
+4. 设置行地址 `RASET 0..127`。
+5. 发送 `RAMWR 0x2C`，告诉 LCD 后续是显存像素数据。
+6. 从 `(0,0)` 开始逐像素生成 `pixel_rgb`。
+7. 每个像素发高字节、低字节。
+8. 扫到 `(127,127)` 后一帧结束，回到 `R_IDLE`。
+
+窗口设置字节由 `seq_data(seq_idx)` 和 `seq_dc(seq_idx)` 给出：
+
+```text
+idx 0：0x2A，command，CASET
+idx 1：0x00，data，起始列高字节
+idx 2：0x00，data，起始列低字节
+idx 3：0x00，data，结束列高字节
+idx 4：0x7F，data，结束列低字节，127
+idx 5：0x2B，command，RASET
+idx 6：0x00，data，起始行高字节
+idx 7：0x00，data，起始行低字节
+idx 8：0x00，data，结束行高字节
+idx 9：0x7F，data，结束行低字节，127
+idx 10：0x2C，command，RAMWR
+```
+
+### 屏幕布局
+
+屏幕被当作 16 列 x 16 行的 8x8 字符网格，因为：
+
+```text
+128 / 8 = 16
+```
+
+当前像素对应的字符网格位置：
+
+```verilog
+cell_col = pix_x[6:3];  // 0..15
+cell_row = pix_y[6:3];  // 0..15
+```
+
+字符内部像素位置：
+
+```verilog
+font_col = pix_x[2:0];  // 0..7
+font_row = pix_y[2:0];  // 0..7
+```
+
+当前界面布局如下：
+
+```text
+字符行 0：YYYY-MM-DD
+字符行 1：空
+字符行 2：HH:MM:SS
+字符行 3：空
+字符行 4：STAT IDLE / STUDY / LONG / OVER / REST / AWAY
+字符行 5：空
+字符行 6：SIT xxxxM
+字符行 7：空
+字符行 8：AWAY xxxxM
+字符行 9：空
+字符行 10：HP xxx
+字符行 11：NOW xxxxM
+像素 y=96..107：HP 横向血条
+其他区域：黑色背景
+```
+
+`NOW xxxxM` 是当前状态计时器：
+
+- 状态为 `ST_STUDY`、`ST_SEDENTARY`、`ST_OVER_SEDENTARY` 时，显示当前学习/入座时间 `sit_time_min`。
+- 状态为 `ST_REST`、`ST_AWAY_LONG` 时，显示当前离座时间 `away_time_min`。
+- 状态为 `ST_IDLE` 时，显示 `0000M`。
+
+状态字符串映射：
+
+| `seat_state` | 显示字符串 |
+|---:|---|
+| 0 | `IDLE` |
+| 1 | `STUDY` |
+| 2 | `LONG` |
+| 3 | `OVER` |
+| 4 | `REST` |
+| 5 | `AWAY` |
+
+注意：状态 2 的内部名字是 `ST_SEDENTARY`，屏幕上为了节省宽度显示为 `LONG`。
+
+### 文字生成方式
+
+`char_at(cell_col, cell_row)` 根据字符网格位置返回当前格子应该显示的 ASCII 字符。例如：
+
+- 第 0 行返回日期字符。
+- 第 2 行返回时间字符。
+- 第 4 行返回 `STAT ` 加状态字符串。
+- 第 6 行返回 `SIT xxxxM`。
+- 第 8 行返回 `AWAY xxxxM`。
+- 第 10 行返回 `HP xxx`。
+
+数字不是用十进制字符串库生成的，而是在硬件中用除法和取模拆成各个位：
+
+```verilog
+year_th = (year / 1000) % 10;
+year_h  = (year / 100)  % 10;
+year_t  = (year / 10)   % 10;
+year_o  = year % 10;
+```
+
+然后 `ascii_digit()` 把 0..9 转成 ASCII `0`..`9`。
+
+字模判断流程：
+
+1. `char_at()` 得到当前字符的 ASCII。
+2. `font_rom` 根据 ASCII 和 `font_row` 输出这一行 8 bit 点阵。
+3. `text_on = font_bits[7 - font_col]` 判断当前像素是否属于文字笔画。
+4. 如果 `text_on=1`，当前像素输出文字颜色。
+
+### HP 血条生成方式
+
+HP 血条区域是像素坐标：
+
+```text
+x = 8..119
+y = 96..107
+```
+
+其中边框为白色：
+
+```text
+x=8 或 x=119 或 y=96 或 y=107
+```
+
+内部可填充宽度按 HP 比例计算：
+
+```verilog
+hp_bar_width = (hp * 110) / 100;
+```
+
+内部填充颜色：
+
+```text
+HP >= 70：绿色，RGB565 = 16'h07E0
+30 <= HP < 70：黄色，RGB565 = 16'hFFE0
+HP < 30：红色，RGB565 = 16'hF800
+```
+
+未填充部分是灰色：
+
+```text
+16'h4208
+```
+
+### 报警闪烁
+
+当满足任一条件时，状态区域会闪烁：
+
+```text
+hp_zero_alarm = 1
+seat_state = ST_OVER_SEDENTARY
+```
+
+闪烁节奏由 RTC 秒最低位控制：
+
+```verilog
+blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
+```
+
+闪烁打开时：
+
+- 状态区域背景变成暗红色 `16'h6000`。
+- 状态区域内的文字变成黄色 `16'hFFE0`。
+
+状态区域对应的像素 y 范围：
+
+```text
+y = 30..47
+```
+
+### 像素颜色优先级
+
+`pixel_rgb` 的组合逻辑按优先级决定当前像素颜色：
+
+1. 如果当前像素在 HP 血条区域，优先绘制血条和边框。
+2. 否则，如果当前像素是文字笔画，绘制白色或闪烁黄色文字。
+3. 否则，如果当前像素在闪烁状态区域，绘制暗红背景。
+4. 否则绘制黑色背景。
+
+这意味着 HP 血条区域优先级最高，即使字符网格和血条区域重叠，也会先显示血条。
+
+### 资源特点
+
+当前渲染器没有使用帧缓存 RAM，而是边扫描、边计算、边发送。
+
+优点：
+
+- 资源占用低。
+- 不需要 128x128x16 bit 的显存。
+- 显示内容由寄存器实时决定。
+
+限制：
+
+- 每次刷新都要发送整屏 32768 字节。
+- 字体和布局是固定写在逻辑里的。
+- 字符显示只支持 `font_rom.v` 中已有的 ASCII 字符。
+
+## Testbench
+
+`tb_health_lcd_top.v` 用于验证主要逻辑。
+
+当前 testbench 做了这些检查：
+
+- LCD 初始化完成。
+- HP 在安全、警戒、危险距离下分别按规则变化。
+- HP 到 0 后饱和并触发报警。
+- 坐满 45 分钟进入久坐。
+- 坐满 60 分钟进入过度久坐。
+- 离开 20 分钟进入长时间离开。
+- 离开 30 分钟回到空闲并清空学习时间。
+- 离开 3 分钟内返回，不清空学习时间。
+- 离开超过 3 分钟后返回，清空学习时间并重新进入学习。
+
+运行命令：
 
 ```powershell
 cd D:\UserDate\DeskTop\数字系统Project\src\lcd
@@ -336,53 +589,40 @@ iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_to
 vvp tb_health_lcd_top.vvp
 ```
 
-期望输出包含：
+通过时应看到：
 
 ```text
-PASS LCD init_done
-PASS hp safe saturates at 100
-PASS hp warn minus one
-PASS hp danger minus three
-PASS hp danger saturates at zero
-PASS state 45min sedentary
-PASS state 60min over sedentary
-PASS state away 20min
-PASS state away 30min idle
 ALL TESTS PASSED
 ```
 
-## XDC 约束：ego1_st7735_example.xdc
+## XDC 约束
 
-该文件是示例约束，不包含真实 EGO1 引脚号。
+`ego1_st7735_example.xdc` 是示例约束文件。
 
-已包含：
+它包含：
 
-- 100 MHz 时钟约束：
+- `clk` 的时钟约束。
+- 输入输出端口的 `LVCMOS33` I/O 标准。
+- LCD 和传感器管脚的占位模板。
 
-```tcl
-create_clock -period 10.000 -name clk100 [get_ports clk]
-```
+上板前需要按实际 EGO1 板卡和 LCD 接线替换 `PACKAGE_PIN`。
 
-- 所有输入/输出的 `LVCMOS33` I/O 标准。
-- LCD 和传感器引脚的 `PACKAGE_PIN` 占位模板。
-
-上板前必须根据你的 EGO1 原理图或实际接线，把 `<PIN_...>` 替换成真实封装管脚。
-
-## 上板使用建议
+## 上板注意事项
 
 1. 在 Vivado 中把 `health_lcd_top.v` 设为顶层。
-2. 添加本目录全部 `.v` 文件。
-3. 添加并修改 `ego1_st7735_example.xdc` 中的实际管脚。
-4. 确认顶层参数：
-   - 正常上板：`CLK_HZ=100000000`，`SIM_FAST=0`。
-   - SPI 初始建议：`SPI_CLK_DIV=5`，约 10 MHz。
-   - 如果屏幕不稳定，可把 `SPI_CLK_DIV` 改大，例如 8 或 10。
-5. 如果屏幕方向或颜色顺序不符合预期，优先调整 `MADCTL_PARAM`。
+2. 添加本目录所有 `.v` 文件。
+3. 修改 XDC 中的真实管脚。
+4. 如果使用 EGO1 的 100 MHz 时钟，把 `CLK_HZ` 改为 `100000000`。
+5. 上板时 `sim_fast` 应接 0。
+6. SPI 初始频率建议 10 MHz 或更低。如果屏幕不稳定，可以增大 `SPI_CLK_DIV`。
+7. 如果画面方向不对，调整 `MADCTL_PARAM`。
+8. 如果背光引脚是低有效，需要把 `lcd_blk` 的固定输出从 1 改成 0，或增加背光极性参数。
 
 ## 当前实现边界
 
-- SPI 只写，不支持读 LCD ID 或状态。
-- 没有帧缓存，图像是实时逐像素生成。
-- 字库是简化 8x8 ASCII 字库，只覆盖当前界面需要的字符。
-- 日期时间来自内部计数器，没有外部 RTC 芯片校时。
-- LCD 初始化序列是 ST7735S 常用最小序列，不同屏幕模组如果有偏移或颜色顺序差异，可能需要调整 `MADCTL_PARAM`、窗口范围或增加厂商推荐初始化命令。
+- SPI 只写，不读 LCD 状态或 ID。
+- 没有帧缓存，画面实时生成。
+- 字库是简化 8x8 ASCII 字库。
+- RTC 没有外部校时接口。
+- LCD 初始化序列是常用最小序列，不同 ST7735S 模组可能需要增加偏移、颜色顺序或厂商初始化命令。
+

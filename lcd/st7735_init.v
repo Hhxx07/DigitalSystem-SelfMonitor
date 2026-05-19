@@ -2,7 +2,9 @@
 
 module st7735_init #(
     parameter integer CLK_HZ = 100000000,
-    parameter [7:0]   MADCTL_PARAM = 8'h00
+    parameter [7:0]   MADCTL_PARAM = 8'h00,
+    parameter [15:0]  LCD_X_OFFSET = 16'd2,
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1
 )(
     input  wire       clk,
     input  wire       rst_n,
@@ -23,6 +25,10 @@ module st7735_init #(
     localparam [2:0] S_DONE       = 3'd5;
 
     localparam [4:0] LAST_INDEX = 5'd17;
+    localparam [15:0] COL_START = LCD_X_OFFSET;
+    localparam [15:0] COL_END   = LCD_X_OFFSET + 16'd127;
+    localparam [15:0] ROW_START = LCD_Y_OFFSET;
+    localparam [15:0] ROW_END   = LCD_Y_OFFSET + 16'd127;
 
     reg [2:0]  state;
     reg [4:0]  seq_idx;
@@ -52,15 +58,15 @@ module st7735_init #(
                 5'd4:  seq_data = 8'h36; // MADCTL
                 5'd5:  seq_data = MADCTL_PARAM;
                 5'd6:  seq_data = 8'h2A; // CASET
-                5'd7:  seq_data = 8'h00;
-                5'd8:  seq_data = 8'h00;
-                5'd9:  seq_data = 8'h00;
-                5'd10: seq_data = 8'h7F;
+                5'd7:  seq_data = COL_START[15:8];
+                5'd8:  seq_data = COL_START[7:0];
+                5'd9:  seq_data = COL_END[15:8];
+                5'd10: seq_data = COL_END[7:0];
                 5'd11: seq_data = 8'h2B; // RASET
-                5'd12: seq_data = 8'h00;
-                5'd13: seq_data = 8'h00;
-                5'd14: seq_data = 8'h00;
-                5'd15: seq_data = 8'h7F;
+                5'd12: seq_data = ROW_START[15:8];
+                5'd13: seq_data = ROW_START[7:0];
+                5'd14: seq_data = ROW_END[15:8];
+                5'd15: seq_data = ROW_END[7:0];
                 5'd16: seq_data = 8'h13; // NORON
                 5'd17: seq_data = 8'h29; // DISPON
                 default: seq_data = 8'h00;

@@ -1,7 +1,6 @@
 `timescale 1ns / 1ps
 
 module hp_engine #(
-    parameter integer SIM_FAST = 0,
     parameter integer INIT_HP  = 100
 )(
     input  wire       clk,
@@ -9,6 +8,7 @@ module hp_engine #(
     input  wire       tick_1hz,
     input  wire       seated,
     input  wire [9:0] distance_cm,
+    input  wire       sim_fast,
     output reg  [7:0] hp,
     output wire       hp_zero_alarm,
     output reg  [1:0] posture_level
@@ -39,7 +39,7 @@ module hp_engine #(
         end else begin
             minute_tick <= 1'b0;
             if (tick_1hz) begin
-                if (SIM_FAST != 0) begin
+                if (sim_fast != 0) begin
                     minute_tick <= 1'b1;
                 end else if (sec_cnt == 6'd59) begin
                     sec_cnt     <= 6'd0;

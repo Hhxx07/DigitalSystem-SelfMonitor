@@ -1,7 +1,7 @@
 `timescale 1ns / 1ps
 
 module rtc_clock #(
-    parameter integer CLK_HZ     = 100000000,
+    parameter integer CLK_HZ     = 1000000,
     parameter integer INIT_YEAR  = 2026,
     parameter integer INIT_MONTH = 1,
     parameter integer INIT_DAY   = 1,

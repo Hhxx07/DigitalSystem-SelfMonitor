@@ -2,7 +2,9 @@
 
 module display_renderer #(
     parameter integer CLK_HZ   = 100000000,
-    parameter integer FRAME_HZ = 2
+    parameter integer FRAME_HZ = 2,
+    parameter [15:0]  LCD_X_OFFSET = 16'd2,
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1
 )(
     input  wire        clk,
     input  wire        rst_n,
@@ -40,6 +42,10 @@ module display_renderer #(
     localparam [15:0] C_DARK_RED = 16'h6000;
 
     localparam [31:0] FRAME_PERIOD = (CLK_HZ / FRAME_HZ);
+    localparam [15:0] COL_START = LCD_X_OFFSET;
+    localparam [15:0] COL_END   = LCD_X_OFFSET + 16'd127;
+    localparam [15:0] ROW_START = LCD_Y_OFFSET;
+    localparam [15:0] ROW_END   = LCD_Y_OFFSET + 16'd127;
 
     reg [2:0]  state;
     reg [3:0]  seq_idx;
@@ -83,6 +89,12 @@ module display_renderer #(
     wire [3:0] away_h  = (away_time_min / 16'd100)  % 16'd10;
     wire [3:0] away_t  = (away_time_min / 16'd10)   % 16'd10;
     wire [3:0] away_o  = away_time_min % 16'd10;
+    wire [15:0] active_time_min = ((seat_state == 3'd4) || (seat_state == 3'd5)) ? away_time_min :
+                                  ((seat_state == 3'd0) ? 16'd0 : sit_time_min);
+    wire [3:0] active_th = (active_time_min / 16'd1000) % 16'd10;
+    wire [3:0] active_h  = (active_time_min / 16'd100)  % 16'd10;
+    wire [3:0] active_t  = (active_time_min / 16'd10)   % 16'd10;
+    wire [3:0] active_o  = active_time_min % 16'd10;
     wire [3:0] hp_h    = hp / 8'd100;
     wire [3:0] hp_t    = (hp / 8'd10) % 8'd10;
     wire [3:0] hp_o    = hp % 8'd10;
@@ -220,6 +232,20 @@ module display_renderer #(
                         default: char_at = " ";
                     endcase
                 end
+                4'd11: begin
+                    case (col)
+                        4'd0: char_at = "N";
+                        4'd1: char_at = "O";
+                        4'd2: char_at = "W";
+                        4'd3: char_at = " ";
+                        4'd4: char_at = ascii_digit(active_th);
+                        4'd5: char_at = ascii_digit(active_h);
+                        4'd6: char_at = ascii_digit(active_t);
+                        4'd7: char_at = ascii_digit(active_o);
+                        4'd8: char_at = "M";
+                        default: char_at = " ";
+                    endcase
+                end
                 default: char_at = " ";
             endcase
         end
@@ -230,15 +256,15 @@ module display_renderer #(
         begin
             case (idx)
                 4'd0:  seq_data = 8'h2A; // CASET
-                4'd1:  seq_data = 8'h00;
-                4'd2:  seq_data = 8'h00;
-                4'd3:  seq_data = 8'h00;
-                4'd4:  seq_data = 8'h7F;
+                4'd1:  seq_data = COL_START[15:8];
+                4'd2:  seq_data = COL_START[7:0];
+                4'd3:  seq_data = COL_END[15:8];
+                4'd4:  seq_data = COL_END[7:0];
                 4'd5:  seq_data = 8'h2B; // RASET
-                4'd6:  seq_data = 8'h00;
-                4'd7:  seq_data = 8'h00;
-                4'd8:  seq_data = 8'h00;
-                4'd9:  seq_data = 8'h7F;
+                4'd6:  seq_data = ROW_START[15:8];
+                4'd7:  seq_data = ROW_START[7:0];
+                4'd8:  seq_data = ROW_END[15:8];
+                4'd9:  seq_data = ROW_END[7:0];
                 4'd10: seq_data = 8'h2C; // RAMWR
                 default: seq_data = 8'h00;
             endcase

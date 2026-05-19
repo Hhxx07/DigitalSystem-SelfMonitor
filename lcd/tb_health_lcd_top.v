@@ -6,6 +6,7 @@ module tb_health_lcd_top;
     reg rst_n;
     reg pressure_ok;
     reg ir_ok;
+    reg sim_fast;
     reg [9:0] distance_cm;
 
     wire lcd_cs_n;
@@ -22,13 +23,13 @@ module tb_health_lcd_top;
     localparam [2:0] ST_STUDY          = 3'd1;
     localparam [2:0] ST_SEDENTARY      = 3'd2;
     localparam [2:0] ST_OVER_SEDENTARY = 3'd3;
+    localparam [2:0] ST_REST           = 3'd4;
     localparam [2:0] ST_AWAY_LONG      = 3'd5;
 
     health_lcd_top #(
         .CLK_HZ(1000),
         .SPI_CLK_DIV(1),
         .FRAME_HZ(2),
-        .SIM_FAST(1),
         .INIT_YEAR(2026),
         .INIT_MONTH(5),
         .INIT_DAY(14),
@@ -41,6 +42,7 @@ module tb_health_lcd_top;
         .pressure_ok(pressure_ok),
         .ir_ok(ir_ok),
         .distance_cm(distance_cm),
+        .sim_fast(sim_fast),
         .lcd_cs_n(lcd_cs_n),
         .lcd_rst_n(lcd_rst_n),
         .lcd_dc(lcd_dc),
@@ -67,7 +69,7 @@ module tb_health_lcd_top;
 
     task check_state;
         input [2:0] expected;
-        input [255:0] name;
+        input [511:0] name;
         begin
             if (dut.seat_state !== expected) begin
                 $display("FAIL state %0s: expected %0d got %0d at %0t", name, expected, dut.seat_state, $time);
@@ -80,7 +82,7 @@ module tb_health_lcd_top;
 
     task check_hp;
         input [7:0] expected;
-        input [255:0] name;
+        input [511:0] name;
         begin
             if (dut.hp_value !== expected) begin
                 $display("FAIL hp %0s: expected %0d got %0d at %0t", name, expected, dut.hp_value, $time);
@@ -91,11 +93,25 @@ module tb_health_lcd_top;
         end
     endtask
 
+    task check_sit_time;
+        input [15:0] expected;
+        input [511:0] name;
+        begin
+            if (dut.sit_time_min !== expected) begin
+                $display("FAIL sit_time %0s: expected %0d got %0d at %0t", name, expected, dut.sit_time_min, $time);
+                errors = errors + 1;
+            end else begin
+                $display("PASS sit_time %0s = %0d at %0t", name, dut.sit_time_min, $time);
+            end
+        end
+    endtask
+
     initial begin
         errors = 0;
         rst_n = 1'b0;
         pressure_ok = 1'b0;
         ir_ok = 1'b0;
+        sim_fast = 1'b1;
         distance_cm = 10'd60;
 
         repeat (20) @(posedge clk);
@@ -160,6 +176,31 @@ module tb_health_lcd_top;
             $display("FAIL sit_time_min should clear at away 30min, got %0d", dut.sit_time_min);
             errors = errors + 1;
         end
+
+        pressure_ok = 1'b1;
+        ir_ok = 1'b1;
+        wait_sim_minutes(5);
+        check_sit_time(16'd5, "after fresh 5min study");
+
+        pressure_ok = 1'b0;
+        ir_ok = 1'b0;
+        wait_sim_minutes(3);
+        check_state(ST_REST, "away 3min rest");
+
+        pressure_ok = 1'b1;
+        ir_ok = 1'b1;
+        wait_sim_minutes(1);
+        check_sit_time(16'd6, "return within 3min keeps timer");
+
+        pressure_ok = 1'b0;
+        ir_ok = 1'b0;
+        wait_sim_minutes(4);
+
+        pressure_ok = 1'b1;
+        ir_ok = 1'b1;
+        repeat (3) @(posedge clk);
+        check_sit_time(16'd0, "return after more than 3min clears timer");
+        check_state(ST_STUDY, "valid rest restarts study");
 
         if (errors == 0)
             $display("ALL TESTS PASSED");

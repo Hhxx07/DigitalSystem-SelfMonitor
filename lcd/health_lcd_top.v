@@ -1,25 +1,27 @@
 `timescale 1ns / 1ps
 
 module health_lcd_top #(
-    parameter integer CLK_HZ     = 100000000,
+    parameter integer CLK_HZ     = 1000000,
     parameter integer SPI_CLK_DIV = 5,
     parameter integer FRAME_HZ   = 2,
-    parameter integer SIM_FAST   = 0,
     parameter integer INIT_YEAR  = 2026,
     parameter integer INIT_MONTH = 1,
     parameter integer INIT_DAY   = 1,
     parameter integer INIT_HOUR  = 0,
     parameter integer INIT_MIN   = 0,
     parameter integer INIT_SEC   = 0,
-    parameter [7:0]   MADCTL_PARAM = 8'h00
+    parameter [7:0]   MADCTL_PARAM = 8'h00,
+    parameter [15:0]  LCD_X_OFFSET = 16'd2,
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1
 )(
     input  wire clk,
     input  wire rst_n,
-// 收到回复来上课
-    
+
     input  wire pressure_ok,
     input  wire ir_ok,
     input  wire [9:0] distance_cm,
+
+    input  wire sim_fast,
 
     output wire lcd_cs_n,
     output wire lcd_rst_n,
@@ -87,20 +89,18 @@ module health_lcd_top #(
         .second(second)
     );
 
-    seat_fsm #(
-        .SIM_FAST(SIM_FAST)
-    ) u_seat (
+    seat_fsm u_seat (
         .clk(clk),
         .rst_n(rst_n),
         .tick_1hz(tick_1hz),
         .seated(seated),
         .state(seat_state),
         .sit_time_min(sit_time_min),
-        .away_time_min(away_time_min)
+        .away_time_min(away_time_min),
+        .sim_fast(sim_fast)
     );
 
     hp_engine #(
-        .SIM_FAST(SIM_FAST),
         .INIT_HP(100)
     ) u_hp (
         .clk(clk),
@@ -110,12 +110,15 @@ module health_lcd_top #(
         .distance_cm(distance_cm),
         .hp(hp_value),
         .hp_zero_alarm(hp_zero_alarm),
-        .posture_level(posture_level)
+        .posture_level(posture_level),
+        .sim_fast(sim_fast)
     );
 
     st7735_init #(
         .CLK_HZ(CLK_HZ),
-        .MADCTL_PARAM(MADCTL_PARAM)
+        .MADCTL_PARAM(MADCTL_PARAM),
+        .LCD_X_OFFSET(LCD_X_OFFSET),
+        .LCD_Y_OFFSET(LCD_Y_OFFSET)
     ) u_lcd_init (
         .clk(clk),
         .rst_n(rst_n),
@@ -130,7 +133,9 @@ module health_lcd_top #(
 
     display_renderer #(
         .CLK_HZ(CLK_HZ),
-        .FRAME_HZ(FRAME_HZ)
+        .FRAME_HZ(FRAME_HZ),
+        .LCD_X_OFFSET(LCD_X_OFFSET),
+        .LCD_Y_OFFSET(LCD_Y_OFFSET)
     ) u_renderer (
         .clk(clk),
         .rst_n(rst_n),
