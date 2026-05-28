@@ -1,6 +1,6 @@
 ﻿# 超声波测距子系统说明
 
-本目录是超声波测距模块，用于给 LCD 健康坐姿系统提供距离数据。当前系统使用三路超声波：正前方测量人体前方距离，左右前方 45 度测量左右肩方向距离，并用左右差值判断躯干状态。
+本目录是超声波测距模块，用于给 LCD 健康坐姿系统提供距离数据。当前系统使用三路超声波：正前方专门测量头部/上身离桌距离，左右前方传感器测量左右胸前/肩前硬面的斜距，并用左右差值和单侧过近情况判断躯干状态。
 
 ## 硬件条件
 
@@ -28,7 +28,7 @@
 ├── trig_generator.v  周期性产生 Trig 触发脉冲
 ├── signal_sync.v     对 Echo 做同步和上升/下降沿检测
 ├── distance_calc.v   根据 Echo 高电平宽度计算距离，单位 cm
-└── torso_posture_analyzer.v 根据左右肩距差判断躯干状态和 HP 额外扣分
+└── torso_posture_analyzer.v 根据左右 45 度斜距判断躯干状态和 HP 额外扣分
 ```
 
 ## 顶层接口
@@ -68,8 +68,8 @@ module top_Ranging(
    - 正前方：`ultrasonic_front_echo/trig`
    - 左前 45 度：`ultrasonic_left45_echo/trig`
    - 右前 45 度：`ultrasonic_right45_echo/trig`
-7. 正前方距离用于 `POST SAFE/WARN/DANGER`、HP 基础加减和 `DIST xxxxCM` 显示。
-8. 左右 45 度距离进入 `torso_posture_analyzer.v`，计算肩距差值和躯干状态。
+7. 正前方距离作为 `dHead` 使用，用于 `POST SAFE/WARN/DANGER`、HP 基础加减和 `HEAD xxxxCM` 显示。
+8. 左右 45 度距离作为 `dL/dR` 进入 `torso_posture_analyzer.v`，计算左右差值、单侧过近状态和躯干状态。
 
 ## 躯干状态判断
 
@@ -81,26 +81,48 @@ left45_distance_cm
 right45_distance_cm
 ```
 
-当前判断主要使用左右 45 度肩距的绝对差值：
+当前判断使用左右 45 度斜距：
 
 ```text
-shoulder_diff_cm = abs(left45_distance_cm - right45_distance_cm)
+dL = left45_distance_cm
+dR = right45_distance_cm
+shoulder_diff_cm = abs(dL - dR)
 ```
 
-默认阈值：
+安装和测量假设：
+
+- 左右传感器水平朝桌子中线内收约 8 度。
+- 左右传感器垂直方向微上仰约 3 度。
+- 正常坐正时，`dL/dR` 通常在 24 到 30 cm。
+- 正前方头部距离传感器位于桌子中线靠前位置，建议桌面以上约 40 cm、相对桌前沿后退约 6 cm。
+- 正前方传感器向下俯角约 25 到 35 度，使波束中心落在肩心/额头中上部。
+- 正常读写/屏幕坐姿下，`dHead` 通常约 28 到 42 cm。
+
+`torso_posture_analyzer.v` 的默认稳定时间为 `STABLE_MS=500`，也就是异常条件需要持续约 0.5 秒才改变躯干状态。需要更灵敏时可把该参数改为 300。
+
+左右 45 度躯干判断阈值：
 
 | 差值范围 | 显示 | 含义 | HP 额外影响 |
 |---|---|---|---:|
-| `< 5cm` | `GOOD` | 躯干基本正常 | 0 |
-| `5..11cm` | `LEAN` | 微倾 | 每分钟 -1 |
-| `12..21cm` | `SIDE` | 侧弯 | 每分钟 -2 |
-| `>= 22cm` | `TWIST` | 扭转 | 每分钟 -3 |
+| `dL/dR` 都在 24..30cm，且 `abs(dL-dR) < 5cm` | `GOOD` | 躯干基本正常 | 0 |
+| 任一侧离开 24..30cm 正常范围，且未触发更严重条件 | `LEAN` | 微倾或轻微偏位 | 每分钟 -1 |
+| 任一侧 `< 19cm` 且稳定 | `SIDE` | 这一侧太贴近桌沿，侧弯/侧倾过大 | 每分钟 -2 |
+| `abs(dL-dR) >= 5cm` 且稳定，且没有单侧过近 | `TWIST` | 左右肩前斜距不均，疑似扭转/歪坐 | 每分钟 -3 |
+
+正前方 `dHead` 不在 `torso_hp_penalty` 中重复扣分，而是由 `hp_engine.v` 直接产生 `POST` 状态和基础 HP 变化：
+
+| dHead 范围 | POST | HP 基础影响 |
+|---|---|---:|
+| `>= 26cm` | `SAFE` | 每分钟 +1 |
+| `20..25cm` | `WARN` | 每分钟 -1 |
+| `< 20cm` | `DANGER` | 每分钟 -3 |
 
 LCD 会显示：
 
 ```text
 TDIF xxxxCM
 TORS GOOD/LEAN/SIDE/TWIST
+HEAD xxxxCM
 ```
 
 这些显示只在 `seated=1` 时出现。
@@ -150,7 +172,7 @@ top_Ranging u_ultrasonic_left45 (...);
 top_Ranging u_ultrasonic_right45 (...);
 ```
 
-正前方距离饱和到 10-bit 后给 LCD 和 HP 使用：
+正前方 `dHead` 距离饱和到 10-bit 后给 LCD 和 HP 使用：
 
 ```verilog
 assign posture_distance_cm =
@@ -160,7 +182,11 @@ assign posture_distance_cm =
 左右肩方向距离饱和到 10-bit 后进入躯干分析模块：
 
 ```verilog
-torso_posture_analyzer u_torso (
+torso_posture_analyzer #(
+    .CLK_HZ(CLK_HZ)
+) u_torso (
+    .clk(clk),
+    .rst_n(rst_n),
     .seated(seated),
     .front_distance_cm(posture_distance_cm),
     .left45_distance_cm(shoulder_left45_distance_cm),

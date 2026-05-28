@@ -160,7 +160,11 @@ module health_lcd_top #(
         .distance_cm(ultrasonic_right45_distance_cm)
     );
 
-    torso_posture_analyzer u_torso (
+    torso_posture_analyzer #(
+        .CLK_HZ(CLK_HZ)
+    ) u_torso (
+        .clk(clk),
+        .rst_n(rst_n),
         .seated(seated),
         .front_distance_cm(posture_distance_cm),
         .left45_distance_cm(shoulder_left45_distance_cm),

@@ -20,6 +20,8 @@ module hp_engine #(
     localparam [1:0] POSTURE_WARN   = 2'd1;
     localparam [1:0] POSTURE_DANGER = 2'd2;
     localparam [2:0] ST_IDLE         = 3'd0;
+    localparam [9:0] HEAD_WARN_CM    = 10'd26;
+    localparam [9:0] HEAD_DANGER_CM  = 10'd20;
 
     reg [5:0] sec_cnt;
     reg       minute_tick;
@@ -29,9 +31,9 @@ module hp_engine #(
     assign hp_zero_alarm = (hp == 8'd0);
 
     always @(*) begin
-        if (distance_cm > 10'd50)
+        if (distance_cm >= HEAD_WARN_CM)
             hp_delta = 6'sd1 - {3'd0, torso_hp_penalty};
-        else if (distance_cm >= 10'd30)
+        else if (distance_cm >= HEAD_DANGER_CM)
             hp_delta = -6'sd1 - {3'd0, torso_hp_penalty};
         else
             hp_delta = -6'sd3 - {3'd0, torso_hp_penalty};
@@ -43,9 +45,9 @@ module hp_engine #(
     end
 
     always @(*) begin
-        if (distance_cm > 10'd50)
+        if (distance_cm >= HEAD_WARN_CM)
             posture_level = POSTURE_SAFE;
-        else if (distance_cm >= 10'd30)
+        else if (distance_cm >= HEAD_DANGER_CM)
             posture_level = POSTURE_WARN;
         else
             posture_level = POSTURE_DANGER;

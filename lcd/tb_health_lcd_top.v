@@ -148,9 +148,9 @@ module tb_health_lcd_top;
 
         repeat (20) @(posedge clk);
         rst_n = 1'b1;
-        force dut.ultrasonic_front_distance_cm = 16'd60;
-        force dut.ultrasonic_left45_distance_cm = 16'd45;
-        force dut.ultrasonic_right45_distance_cm = 16'd45;
+        force dut.ultrasonic_front_distance_cm = 16'd40;
+        force dut.ultrasonic_left45_distance_cm = 16'd27;
+        force dut.ultrasonic_right45_distance_cm = 16'd27;
 
         timeout_count = 0;
         while ((dut.init_done != 1'b1) && (timeout_count < 10000)) begin
@@ -173,15 +173,15 @@ module tb_health_lcd_top;
         pressure_ok = 1'b1;
         ir_ok = 1'b1;
 
-        force dut.ultrasonic_front_distance_cm = 16'd60;
+        force dut.ultrasonic_front_distance_cm = 16'd40;
         wait_sim_minutes(1);
         check_hp(8'd100, "safe saturates at 100");
 
-        force dut.ultrasonic_front_distance_cm = 16'd40;
+        force dut.ultrasonic_front_distance_cm = 16'd24;
         wait_sim_minutes(1);
         check_hp(8'd99, "warn minus one");
 
-        force dut.ultrasonic_front_distance_cm = 16'd20;
+        force dut.ultrasonic_front_distance_cm = 16'd18;
         wait_sim_minutes(1);
         check_hp(8'd96, "danger minus three");
 
@@ -192,7 +192,7 @@ module tb_health_lcd_top;
             errors = errors + 1;
         end
 
-        force dut.ultrasonic_front_distance_cm = 16'd60;
+        force dut.ultrasonic_front_distance_cm = 16'd40;
         wait_sim_minutes(10);
         check_state(ST_SEDENTARY, "45min sedentary");
 

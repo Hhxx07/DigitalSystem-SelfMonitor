@@ -354,10 +354,10 @@ module display_renderer #(
                 4'd12: begin
                     if (display_distance) begin
                         case (col)
-                            4'd0: char_at = "D";
-                            4'd1: char_at = "I";
-                            4'd2: char_at = "S";
-                            4'd3: char_at = "T";
+                            4'd0: char_at = "H";
+                            4'd1: char_at = "E";
+                            4'd2: char_at = "A";
+                            4'd3: char_at = "D";
                             4'd4: char_at = " ";
                             4'd5: char_at = ascii_digit(dist_th);
                             4'd6: char_at = ascii_digit(dist_h);

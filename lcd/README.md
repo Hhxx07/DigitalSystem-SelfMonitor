@@ -13,9 +13,9 @@ health_lcd_top.v
 ├── rtc_clock.v          产生 1 Hz tick，并维护年月日时分秒
 ├── seat_fsm.v           维护座位状态、学习时间和离座时间
 ├── ../超声波/top_Ranging.v              驱动单个超声波模块并输出距离
-├── ../超声波/torso_posture_analyzer.v   根据左右肩距差判断躯干状态
+├── ../超声波/torso_posture_analyzer.v   根据左右 45 度斜距判断躯干状态
 ├── ../称重/weight_balance_analyzer.v     根据四角称重值输出重心分布
-├── hp_engine.v          根据距离、躯干状态和入座状态更新 HP
+├── hp_engine.v          根据头部离桌距离、躯干状态和入座状态更新 HP
 ├── st7735_init.v        复位并初始化 ST7735S LCD
 ├── display_renderer.v   生成整屏 128x128 RGB565 显示数据
 │── font_rom.v           8x8 ASCII 字模 ROM
@@ -87,9 +87,9 @@ module health_lcd_top #(
 | `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
 | `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
 | `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
-| `ultrasonic_front_echo` | input | 1 | 正前方超声波 Echo，用于测量人体前方距离。 |
-| `ultrasonic_left45_echo` | input | 1 | 左前方 45 度超声波 Echo，用于测量左肩方向距离。 |
-| `ultrasonic_right45_echo` | input | 1 | 右前方 45 度超声波 Echo，用于测量右肩方向距离。 |
+| `ultrasonic_front_echo` | input | 1 | 正前方超声波 Echo，用于测量头部/上身离桌距离 `dHead`。 |
+| `ultrasonic_left45_echo` | input | 1 | 左前方 45 度超声波 Echo，用于测量左胸前/左肩前斜距 `dL`。 |
+| `ultrasonic_right45_echo` | input | 1 | 右前方 45 度超声波 Echo，用于测量右胸前/右肩前斜距 `dR`。 |
 | `weight_left_front` | input | 16 | 左前称重数值接口，供称重模块接入。 |
 | `weight_left_rear` | input | 16 | 左后称重数值接口，供称重模块接入。 |
 | `weight_right_front` | input | 16 | 右前称重数值接口，供称重模块接入。 |
@@ -125,7 +125,7 @@ top_Ranging u_ultrasonic_left45 (...);
 top_Ranging u_ultrasonic_right45 (...);
 ```
 
-正前方 `ultrasonic_front_distance_cm` 用于原来的正面距离/姿势距离判断；左右 45 度距离用于肩距差值和躯干状态判断。LCD 显示和 HP 计算使用截位/饱和后的 10-bit `posture_distance_cm`：
+正前方 `ultrasonic_front_distance_cm` 现在作为头部/上身离桌距离 `dHead` 使用；左右 45 度距离作为 `dL/dR`，用于左右斜距差值和躯干状态判断。LCD 显示和 HP 计算使用截位/饱和后的 10-bit `posture_distance_cm`：
 
 ```verilog
 assign posture_distance_cm =
@@ -245,7 +245,7 @@ away_time_min / away_time_sec 当前离座时间
 
 ## hp_engine.v
 
-`hp_engine.v` 根据入座状态、座位状态和距离更新 HP。
+`hp_engine.v` 根据入座状态、座位状态、正前方头部离桌距离和躯干状态更新 HP。
 
 输出：
 
@@ -258,10 +258,10 @@ away_time_min / away_time_sec 当前离座时间
 ```text
 seat_state=ST_IDLE：HP 直接恢复到 100，保证下一次开始学习时为满值
 seated=0：HP 不更新
-seated=1 且 posture_distance_cm > 50：每分钟 HP +1，最大 100
-seated=1 且 30 <= posture_distance_cm <= 50：每分钟 HP -1，最小 0
-seated=1 且 posture_distance_cm < 30：每分钟 HP -3，最小 0
-躯干状态额外扣分：微倾 -1，侧弯 -2，扭转 -3
+seated=1 且 dHead >= 26cm：每分钟 HP +1，最大 100
+seated=1 且 20cm <= dHead < 26cm：每分钟 HP -1，最小 0
+seated=1 且 dHead < 20cm：每分钟 HP -3，最小 0
+左右 45 度躯干状态额外扣分：微倾 -1，侧弯 -2，扭转 -3
 ```
 
 这里的“下一次开始学习 HP 值变满”由 `seat_state==ST_IDLE` 实现。用户离开达到 30 分钟后，`seat_fsm.v` 会进入 `ST_IDLE` 并清空座位所有权；此时 `hp_engine.v` 把 HP 恢复为 100。
@@ -360,7 +360,7 @@ bits：该行 8 个像素的点阵数据
 | 显示数据 | `seat_state` | 显示状态字符串。 |
 | 显示数据 | `posture_level` | 显示姿势状态字符串，和久坐状态分开。 |
 | 显示数据 | `sit_time_min/sit_time_sec`, `away_time_min/away_time_sec` | 显示学习时间、离座时间和当前状态计时器，格式为 `mmmm:ss`。 |
-| 显示数据 | `distance_cm` | 显示当前超声波距离，格式为 `DIST xxxxCM`；仅入座状态显示。 |
+| 显示数据 | `distance_cm` | 显示当前正前方头部离桌距离，格式为 `HEAD xxxxCM`；仅入座状态显示。 |
 | 显示数据 | `hp`, `hp_zero_alarm` | 显示 HP 数值、血条颜色和报警闪烁。 |
 
 输出给 SPI 的信号：
@@ -487,7 +487,7 @@ font_row = pix_y[2:0];  // 0..7
 字符行 9：空
 字符行 10：TDIF 0012CM，未入座时整行留空
 字符行 11：TORS LEAN / SIDE / TWIST / GOOD，未入座时整行留空
-字符行 12：DIST 0060CM，未入座时整行留空
+字符行 12：HEAD 0040CM，未入座时整行留空
 字符行 13：HP 100
 像素 y=112..123：HP 横向血条
 其他区域：黑色背景
@@ -499,16 +499,16 @@ font_row = pix_y[2:0];  // 0..7
 - 状态为 `ST_REST`、`ST_AWAY_LONG` 时，显示当前离座时间 `away_time_min:away_time_sec`。
 - 状态为 `ST_IDLE` 时，显示 `0000:00`。
 
-`DIST 0060CM` 显示当前超声波测距值。显示宽度固定为 4 位十进制数字，因此 60 cm 会显示为 `0060CM`，最大可覆盖 LCD 渲染输入的 `1023CM`。
+`HEAD 0040CM` 显示正前方头部/上身离桌距离 `dHead`。显示宽度固定为 4 位十进制数字，因此 40 cm 会显示为 `0040CM`，最大可覆盖 LCD 渲染输入的 `1023CM`。
 
-`TDIF 0012CM` 显示左右 45 度肩膀方向测距的绝对差值。`TORS ...` 显示根据这个差值判断出的躯干状态：
+`TDIF 0012CM` 显示左右 45 度胸前/肩前斜距的绝对差值 `abs(dL-dR)`。`TORS ...` 显示根据左右斜距、单侧过近和稳定时间判断出的躯干状态：
 
 | 躯干显示 | 含义 | HP 额外影响 |
 |---|---|---:|
-| `GOOD` | 左右肩距差很小 | 0 |
-| `LEAN` | 微倾 | 每分钟额外 -1 |
-| `SIDE` | 侧弯 | 每分钟额外 -2 |
-| `TWIST` | 扭转 | 每分钟额外 -3 |
+| `GOOD` | `dL/dR` 在 24..30cm 附近，且左右差小于 5cm | 0 |
+| `LEAN` | 任一侧离开 24..30cm 正常范围，未触发更严重条件 | 每分钟额外 -1 |
+| `SIDE` | 任一侧小于 19cm 并稳定，表示该侧太贴近桌沿/侧弯过大 | 每分钟额外 -2 |
+| `TWIST` | `abs(dL-dR) >= 5cm` 并稳定，疑似扭转/歪坐 | 每分钟额外 -3 |
 
 距离和躯干相关行由顶层 `seated = pressure_ok & ir_ok` 控制。只有 `seated=1` 时显示；如果人不在座位上，LCD 不显示这些测距数据，避免把空座位或上一笔距离误解为当前坐姿距离。
 
@@ -534,9 +534,9 @@ font_row = pix_y[2:0];  // 0..7
 
 | `posture_level` | 显示字符串 | 含义 |
 |---:|---|---|
-| 0 | `SAFE` | `posture_distance_cm > 50`，姿势距离安全 |
-| 1 | `WARN` | `30 <= posture_distance_cm <= 50`，姿势需要注意 |
-| 2 | `DANGER` | `posture_distance_cm < 30`，姿势不当 |
+| 0 | `SAFE` | `dHead >= 26cm`，头部离桌距离安全 |
+| 1 | `WARN` | `20cm <= dHead < 26cm`，开始前倾/低头，需要提醒 |
+| 2 | `DANGER` | `dHead < 20cm`，离桌过近，姿势不当 |
 
 ### 文字生成方式
 
@@ -551,7 +551,7 @@ font_row = pix_y[2:0];  // 0..7
 - 第 8 行返回 `NOW 0000:00`。
 - 第 10 行返回 `TDIF xxxxCM`。
 - 第 11 行返回 `TORS ...`。
-- 第 12 行返回 `DIST xxxxCM`。
+- 第 12 行返回 `HEAD xxxxCM`。
 - 第 13 行返回 `HP xxx`。
 
 数字不是用十进制字符串库生成的，而是在硬件中用除法和取模拆成各个位：

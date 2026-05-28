@@ -7,7 +7,7 @@
 ```text
 src/
 ├── lcd/        ST7735S LCD 显示、RTC、座位状态机、HP 引擎、系统顶层
-├── 超声波/    三路超声波测距，提供正前距离和左右肩距差
+├── 超声波/    三路超声波测距，提供正前头部离桌距离和左右 45 度斜距
 ├── 红外检测/  红外人体检测相关模块
 └── 称重/      压力/称重检测相关模块
 ```
@@ -26,7 +26,7 @@ lcd/health_lcd_top.v
 - RTC 日期时间
 - 座位状态机 `IDLE/STUDY/SEDENTARY/OVER/REST/AWAY`
 - HP 计算与报警
-- 三路超声波测距与躯干状态判断
+- 三路超声波测距、头部离桌判断与躯干状态判断
 - 四角称重重心分布接口
 - 压力和红外入座判断
 
@@ -38,7 +38,7 @@ lcd/health_lcd_top.v
 - 低有效复位 `rst_n`
 - 压力检测输入 `pressure_ok`
 - 红外检测输入 `ir_ok`
-- 正前方超声波 `ultrasonic_front_echo/trig`
+- 正前方头部距离超声波 `ultrasonic_front_echo/trig`
 - 左前 45 度超声波 `ultrasonic_left45_echo/trig`
 - 右前 45 度超声波 `ultrasonic_right45_echo/trig`
 - 四角称重数值输入：左前、左后、右前、右后
@@ -54,7 +54,7 @@ lcd/health_lcd_top.v
 
 三路超声波 Echo/Trig
   -> top_Ranging x3
-  -> 正前距离 + 左右 45 度肩距
+  -> 正前 dHead + 左右 45 度 dL/dR 斜距
   -> posture_level + torso_posture_analyzer
   -> hp_engine 和 LCD 距离/躯干显示
 
@@ -83,9 +83,9 @@ LCD 显示：
 - 学习计时 `SIT mmmm:ss`
 - 离座计时 `AWAY mmmm:ss`
 - 当前计时 `NOW mmmm:ss`
-- 左右肩距差 `TDIF xxxxCM`
+- 左右 45 度斜距差 `TDIF xxxxCM`
 - 躯干状态 `TORS GOOD/LEAN/SIDE/TWIST`
-- 当前距离 `DIST xxxxCM`，仅入座时显示
+- 头部离桌距离 `HEAD xxxxCM`，仅入座时显示
 - HP 数值和底部血条
 
 ## 状态与策略摘要
@@ -98,8 +98,8 @@ LCD 显示：
 - 离座超过 20 分钟进入长时间离开
 - 离座超过 30 分钟进入 `IDLE`
 - 进入 `IDLE` 后 HP 恢复为 100，下一次学习从满 HP 开始
-- 正前距离影响 `POST SAFE/WARN/DANGER`
-- 左右 45 度肩距差判断 `GOOD/LEAN/SIDE/TWIST`
+- 正前 `dHead` 按 `>=26cm / 20..25cm / <20cm` 影响 `POST SAFE/WARN/DANGER`
+- 左右 45 度 `dL/dR` 按 24..30cm 正常范围、5cm 差值和 19cm 单侧过近阈值判断 `GOOD/LEAN/SIDE/TWIST`
 - 躯干微倾、侧弯、扭转会按等级额外扣 HP
 
 ## 子文档
