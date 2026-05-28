@@ -7,7 +7,13 @@ module tb_health_lcd_top;
     reg pressure_ok;
     reg ir_ok;
     reg sim_fast;
-    reg ultrasonic_echo;
+    reg ultrasonic_front_echo;
+    reg ultrasonic_left45_echo;
+    reg ultrasonic_right45_echo;
+    reg [15:0] weight_left_front;
+    reg [15:0] weight_left_rear;
+    reg [15:0] weight_right_front;
+    reg [15:0] weight_right_rear;
 
     wire lcd_cs_n;
     wire lcd_rst_n;
@@ -15,7 +21,13 @@ module tb_health_lcd_top;
     wire lcd_scl;
     wire lcd_mosi;
     wire lcd_blk;
-    wire ultrasonic_trig;
+    wire ultrasonic_front_trig;
+    wire ultrasonic_left45_trig;
+    wire ultrasonic_right45_trig;
+    wire [16:0] weight_front_back_diff;
+    wire [16:0] weight_left_right_diff;
+    wire [1:0] weight_front_back_balance;
+    wire [1:0] weight_left_right_balance;
 
     integer errors;
     integer timeout_count;
@@ -42,9 +54,21 @@ module tb_health_lcd_top;
         .rst_n(rst_n),
         .pressure_ok(pressure_ok),
         .ir_ok(ir_ok),
-        .ultrasonic_echo(ultrasonic_echo),
+        .ultrasonic_front_echo(ultrasonic_front_echo),
+        .ultrasonic_left45_echo(ultrasonic_left45_echo),
+        .ultrasonic_right45_echo(ultrasonic_right45_echo),
+        .weight_left_front(weight_left_front),
+        .weight_left_rear(weight_left_rear),
+        .weight_right_front(weight_right_front),
+        .weight_right_rear(weight_right_rear),
         .sim_fast(sim_fast),
-        .ultrasonic_trig(ultrasonic_trig),
+        .ultrasonic_front_trig(ultrasonic_front_trig),
+        .ultrasonic_left45_trig(ultrasonic_left45_trig),
+        .ultrasonic_right45_trig(ultrasonic_right45_trig),
+        .weight_front_back_diff(weight_front_back_diff),
+        .weight_left_right_diff(weight_left_right_diff),
+        .weight_front_back_balance(weight_front_back_balance),
+        .weight_left_right_balance(weight_left_right_balance),
         .lcd_cs_n(lcd_cs_n),
         .lcd_rst_n(lcd_rst_n),
         .lcd_dc(lcd_dc),
@@ -114,11 +138,19 @@ module tb_health_lcd_top;
         pressure_ok = 1'b0;
         ir_ok = 1'b0;
         sim_fast = 1'b1;
-        ultrasonic_echo = 1'b0;
+        ultrasonic_front_echo = 1'b0;
+        ultrasonic_left45_echo = 1'b0;
+        ultrasonic_right45_echo = 1'b0;
+        weight_left_front = 16'd0;
+        weight_left_rear = 16'd0;
+        weight_right_front = 16'd0;
+        weight_right_rear = 16'd0;
 
         repeat (20) @(posedge clk);
         rst_n = 1'b1;
-        force dut.ultrasonic_distance_cm = 16'd60;
+        force dut.ultrasonic_front_distance_cm = 16'd60;
+        force dut.ultrasonic_left45_distance_cm = 16'd45;
+        force dut.ultrasonic_right45_distance_cm = 16'd45;
 
         timeout_count = 0;
         while ((dut.init_done != 1'b1) && (timeout_count < 10000)) begin
@@ -141,15 +173,15 @@ module tb_health_lcd_top;
         pressure_ok = 1'b1;
         ir_ok = 1'b1;
 
-        force dut.ultrasonic_distance_cm = 16'd60;
+        force dut.ultrasonic_front_distance_cm = 16'd60;
         wait_sim_minutes(1);
         check_hp(8'd100, "safe saturates at 100");
 
-        force dut.ultrasonic_distance_cm = 16'd40;
+        force dut.ultrasonic_front_distance_cm = 16'd40;
         wait_sim_minutes(1);
         check_hp(8'd99, "warn minus one");
 
-        force dut.ultrasonic_distance_cm = 16'd20;
+        force dut.ultrasonic_front_distance_cm = 16'd20;
         wait_sim_minutes(1);
         check_hp(8'd96, "danger minus three");
 
@@ -160,7 +192,7 @@ module tb_health_lcd_top;
             errors = errors + 1;
         end
 
-        force dut.ultrasonic_distance_cm = 16'd60;
+        force dut.ultrasonic_front_distance_cm = 16'd60;
         wait_sim_minutes(10);
         check_state(ST_SEDENTARY, "45min sedentary");
 
@@ -179,6 +211,7 @@ module tb_health_lcd_top;
             $display("FAIL sit_time_min should clear at away 30min, got %0d", dut.sit_time_min);
             errors = errors + 1;
         end
+        check_hp(8'd100, "refills after idle");
 
         pressure_ok = 1'b1;
         ir_ok = 1'b1;

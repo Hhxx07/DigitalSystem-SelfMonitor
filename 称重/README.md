@@ -1,228 +1,129 @@
-# HX711 称重数据串口回传模块说明
+# 称重子系统说明
 
-本目录实现了一个完整的 HX711 称重芯片读取链路：FPGA 读取 HX711 的 24 位原始转换结果，并通过串口把 `raw_data` 回传到电脑。串口助手中可以直接看到类似下面的文本：
+本目录包含 HX711 称重读取代码，以及给健康坐姿顶层预留的四角称重重心分析接口。
 
-```text
-RAW=0x123456
-```
+## 当前接口规划
 
-默认参数适配常见 FPGA 实验板：
-
-- 系统时钟：`100 MHz`
-- 串口波特率：`115200`
-- 串口格式：`8N1`，即 8 位数据位、无校验、1 位停止位
-- HX711 时钟 `PD_SCK`：`50 kHz`
-- HX711 增益：A 通道 128 倍
-
-## 文件组成
-
-### `hx711_weight_uart_top.v`
-
-这是称重串口回传功能的顶层模块。可以直接把它设置为 FPGA 工程 top，也可以把它例化到已有工程顶层中。
-
-主要端口：
-
-- `clk`：系统时钟输入，默认按 `100 MHz` 计算。
-- `rst_n`：低有效复位。
-- `hx711_dout`：连接 HX711 的 `DOUT` 引脚。
-- `hx711_sck`：连接 HX711 的 `PD_SCK` 引脚。
-- `uart_tx`：连接 FPGA 板子的串口发送引脚，再接到 USB-UART 的 RX。
-- `raw_data`：最新一次读取到的 24 位 HX711 原始数据。
-- `raw_data_valid`：`raw_data` 更新时产生一个时钟周期的高脉冲。
-- `link_busy`：链路忙信号，HX711 读取或 UART 发送过程中为高。
-
-### `hx711_uart_link.v`
-
-这是连接模块，负责把 HX711 读取模块和 UART 发送模块串起来。
-
-它完成三件事：
-
-1. 接收 `hx711_reader` 输出的 `raw_data` 和 `raw_data_valid`。
-2. 把 24 位二进制原始数据转换成 ASCII 十六进制字符串。
-3. 逐字节调用 `uart_tx`，向电脑发送一整行文本。
-
-发送格式固定为：
-
-```text
-RAW=0xHHHHHH\r\n
-```
-
-其中 `HHHHHH` 是 6 个十六进制字符，对应 HX711 的 24 位原始输出。例如：
-
-```text
-RAW=0xFF12A0
-```
-
-`hx711_uart_link` 内部带有一个简单的 pending 缓冲。如果 UART 正在发送上一帧数据，而 HX711 又产生了新数据，它会保存最新的一帧，等当前串口发送结束后继续发送。
-
-### `hx711_reader.v`
-
-这是 HX711 读取模块，负责按照 HX711 的时序产生 `PD_SCK`，并从 `DOUT` 上移入 24 位数据。
-
-主要功能：
-
-- 对异步输入 `hx711_dout` 做两级寄存器同步。
-- 等待 `DOUT` 变低，表示 HX711 一次转换完成、数据可读。
-- 产生 24 个读取脉冲，依次读取最高位到最低位。
-- 额外产生 `GAIN_PULSES` 个脉冲，用来选择下一次转换的通道和增益。
-- 输出 `raw_data`，并用 `raw_data_valid` 标记数据有效。
-
-默认 `SCK_FREQ_HZ = 50_000`，即 `PD_SCK` 约为 50 kHz。这个频率远低于 HX711 的上限，同时每个高电平时间也不会超过 HX711 进入掉电模式的阈值。
-
-### `uart_tx.v`
-
-这是通用 UART 发送模块，负责把 8 位数据按串口时序发送出去。
-
-发送格式：
-
-- 空闲状态为高电平。
-- 起始位为低电平。
-- 数据位低位先发，共 8 位。
-- 停止位为高电平。
-
-默认 `BAUD_RATE = 115_200`。模块通过 `CLK_FREQ_HZ / BAUD_RATE` 计算每一位需要保持多少个系统时钟周期。
-
-## 工作原理
-
-### 1. HX711 数据就绪
-
-HX711 完成一次 AD 转换后，会把 `DOUT` 拉低。FPGA 中的 `hx711_reader` 一直监测同步后的 `DOUT`：
-
-- `DOUT = 1`：HX711 忙，数据还没有准备好。
-- `DOUT = 0`：HX711 数据准备好，可以开始读取。
-
-当检测到 `DOUT` 为低后，模块进入读取状态，并开始输出 `PD_SCK` 脉冲。
-
-### 2. 读取 24 位原始数据
-
-HX711 的输出数据是 24 位二进制补码，按最高位优先输出。`hx711_reader` 每产生一个 `PD_SCK` 脉冲，就从 `DOUT` 上采样一位数据，并移入 `shift_reg`。
-
-读取过程如下：
-
-1. `PD_SCK` 拉高。
-2. 保持半个周期。
-3. `PD_SCK` 拉低。
-4. 在模块内部采样当前同步后的 `DOUT`。
-5. 重复 24 次，得到完整的 `raw_data[23:0]`。
-
-读完 24 位后，模块把移位寄存器中的值送到 `raw_data`，同时让 `raw_data_valid` 拉高一个 `clk` 周期。
-
-### 3. 设置下一次 HX711 增益
-
-HX711 在 24 位数据读取完成后，还需要额外的时钟脉冲来选择下一次转换的通道和增益。
-
-本工程通过参数 `GAIN_PULSES` 控制额外脉冲数：
-
-- `1`：A 通道，128 倍增益，默认值。
-- `2`：B 通道，32 倍增益。
-- `3`：A 通道，64 倍增益。
-
-因此默认情况下，一次完整读取会产生 `24 + 1 = 25` 个 `PD_SCK` 脉冲。
-
-### 4. raw_data 转换成串口文本
-
-`hx711_uart_link` 收到 `raw_data_valid` 后，会锁存当前 `raw_data`，然后按固定顺序生成每个要发送的 ASCII 字符：
-
-```text
-R A W = 0 x H H H H H H \r \n
-```
-
-例如 `raw_data = 24'h01ABCD` 时，电脑收到：
-
-```text
-RAW=0x01ABCD
-```
-
-这里发送的是原始 24 位数据，没有做去皮、滤波、标定或重量单位换算。电脑端如果需要转换成克、千克等单位，需要先根据实际传感器和砝码做标定。
-
-### 5. UART 逐字节发送
-
-`uart_tx` 每次只发送一个字节。`hx711_uart_link` 会等待 `uart_tx` 空闲，然后给出一个周期的 `tx_start` 脉冲。
-
-`uart_tx` 的发送顺序为：
-
-1. 起始位 `0`
-2. 8 个数据位，低位先发
-3. 停止位 `1`
-
-每个字符发送完成后，`uart_tx` 输出 `done` 脉冲，`hx711_uart_link` 再发送下一字符，直到一整行 `RAW=0x......\r\n` 全部发送完。
-
-## 顶层使用方法
-
-如果直接使用本目录的顶层模块，工程顶层设置为：
+系统顶层 `lcd/health_lcd_top.v` 为称重数据预留 4 个干净的数值输入：
 
 ```verilog
-hx711_weight_uart_top
+input wire [15:0] weight_left_front,
+input wire [15:0] weight_left_rear,
+input wire [15:0] weight_right_front,
+input wire [15:0] weight_right_rear
 ```
 
-典型引脚连接关系如下：
+四个输入分别对应：
 
-| FPGA 端口 | 外设连接 |
-| --- | --- |
-| `clk` | FPGA 板载系统时钟 |
-| `rst_n` | 复位按键或复位电路，低有效 |
-| `hx711_dout` | HX711 `DOUT` |
-| `hx711_sck` | HX711 `PD_SCK` |
-| `uart_tx` | USB-UART RX 或板载串口 TX 引脚 |
+| 接口 | 含义 |
+|---|---|
+| `weight_left_front` | 左前称重点 |
+| `weight_left_rear` | 左后称重点 |
+| `weight_right_front` | 右前称重点 |
+| `weight_right_rear` | 右后称重点 |
 
-电脑串口助手设置：
+这些接口当前按“已经处理好的重量数值”接入，不直接绑定某一个 HX711 芯片引脚。后续可以由四个 HX711 读取模块、标定模块或滤波模块生成这四路数值。
 
-| 参数 | 设置 |
-| --- | --- |
-| 波特率 | `115200` |
-| 数据位 | `8` |
-| 校验位 | `None` |
-| 停止位 | `1` |
-| 流控 | `None` |
+## 重心分析模块
 
-## 参数说明
+新增模块：
 
-`hx711_weight_uart_top`、`hx711_uart_link`、`hx711_reader`、`uart_tx` 中使用了可配置参数，常用的是下面几个：
+```text
+weight_balance_analyzer.v
+```
 
-| 参数 | 默认值 | 说明 |
-| --- | --- | --- |
-| `CLK_FREQ_HZ` | `100_000_000` | FPGA 系统时钟频率 |
-| `BAUD_RATE` | `115_200` | UART 波特率 |
-| `SCK_FREQ_HZ` | `50_000` | HX711 `PD_SCK` 频率 |
-| `GAIN_PULSES` | `1` | HX711 额外脉冲数，用来选择通道和增益 |
-
-如果开发板系统时钟不是 100 MHz，需要修改 `CLK_FREQ_HZ`，否则 UART 波特率和 HX711 时钟都会不准确。
-
-例如系统时钟是 50 MHz，可以这样例化：
+接口：
 
 ```verilog
-hx711_weight_uart_top #(
-    .CLK_FREQ_HZ(50_000_000),
-    .BAUD_RATE(115_200),
-    .SCK_FREQ_HZ(50_000),
-    .GAIN_PULSES(1)
-) u_hx711_weight_uart_top (
-    .clk(clk),
-    .rst_n(rst_n),
-    .hx711_dout(hx711_dout),
-    .hx711_sck(hx711_sck),
-    .uart_tx(uart_tx),
-    .raw_data(raw_data),
-    .raw_data_valid(raw_data_valid),
-    .link_busy(link_busy)
+module weight_balance_analyzer #(
+    parameter [15:0] WARN_DIFF = 16'd1000,
+    parameter [15:0] DANGER_DIFF = 16'd3000
+)(
+    input  wire [15:0] weight_left_front,
+    input  wire [15:0] weight_left_rear,
+    input  wire [15:0] weight_right_front,
+    input  wire [15:0] weight_right_rear,
+    output reg  [16:0] front_weight_sum,
+    output reg  [16:0] rear_weight_sum,
+    output reg  [16:0] left_weight_sum,
+    output reg  [16:0] right_weight_sum,
+    output reg  [16:0] front_back_diff,
+    output reg  [16:0] left_right_diff,
+    output reg  [1:0]  front_back_balance,
+    output reg  [1:0]  left_right_balance
 );
 ```
 
-## 注意事项
+## 计算方式
 
-1. `raw_data` 是 HX711 的原始 24 位补码数据，不是最终重量值。
-2. 如果串口助手没有数据，先检查 `uart_tx` 是否接到了 USB-UART 的 RX，而不是 TX。
-3. HX711 模块和 FPGA 必须共地。
-4. `hx711_dout` 是异步输入，代码中已经做了两级同步。
-5. `PD_SCK` 高电平保持时间不能过长，否则 HX711 会进入掉电模式。本工程默认 50 kHz，满足正常读取要求。
-6. 若数据跳动较大，属于称重传感器常见现象，后续可以在 `raw_data` 基础上增加平均滤波、中值滤波、去皮和标定换算。
+前后分布：
 
-## 调试建议
+```text
+front_weight_sum = weight_left_front + weight_right_front
+rear_weight_sum  = weight_left_rear  + weight_right_rear
+front_back_diff  = abs(front_weight_sum - rear_weight_sum)
+```
 
-可以按下面顺序排查：
+左右分布：
 
-1. 用万用表确认 HX711 供电正常，并且和 FPGA 共地。
-2. 用逻辑分析仪或示波器观察 `hx711_sck`，确认 `DOUT` 拉低后出现 25 个时钟脉冲。
-3. 打开串口助手，设置为 `115200 8N1`。
-4. 如果电脑收到乱码，优先检查 `CLK_FREQ_HZ` 是否和开发板真实时钟一致。
-5. 如果始终没有输出，检查 `hx711_dout` 是否一直为高；如果一直为高，说明 HX711 可能没有完成转换、接线错误或模块供电异常。
+```text
+left_weight_sum  = weight_left_front  + weight_left_rear
+right_weight_sum = weight_right_front + weight_right_rear
+left_right_diff  = abs(left_weight_sum - right_weight_sum)
+```
+
+等级输出：
+
+```text
+0 = CENTER  差值较小，重心基本居中
+1 = WARN    差值超过 WARN_DIFF
+2 = DANGER  差值超过 DANGER_DIFF
+```
+
+默认阈值：
+
+```text
+WARN_DIFF   = 1000
+DANGER_DIFF = 3000
+```
+
+这两个阈值与实际传感器标定单位有关。若输入是 HX711 原始值，应先做去皮、滤波和标定，再根据实际量程调整阈值。
+
+## 和系统顶层的关系
+
+`health_lcd_top.v` 已经实例化：
+
+```verilog
+weight_balance_analyzer u_weight_balance (...);
+```
+
+并向外输出：
+
+```verilog
+output wire [16:0] weight_front_back_diff
+output wire [16:0] weight_left_right_diff
+output wire [1:0]  weight_front_back_balance
+output wire [1:0]  weight_left_right_balance
+```
+
+这些输出目前作为干净的系统接口保留，后续可以用于 LCD 显示、HP 影响、蜂鸣器报警或上位机记录。
+
+## 现有 HX711 文件
+
+目录中仍保留原来的单路 HX711 串口调试链路：
+
+```text
+hx711_reader.v
+hx711_uart_link.v
+hx711_weight_uart_top.v
+uart_tx.v
+```
+
+这些文件用于读取单个 HX711 的 24-bit 原始数据并通过串口输出，适合做传感器调试和标定。正式集成四角称重时，建议复用 `hx711_reader.v`，为四个角各实例化一路读取链路，然后把标定后的重量数值接到四个 `weight_*` 输入。
+
+## 上板建议
+
+1. 先分别调通每个称重点的 HX711 原始读数。
+2. 对四路传感器做去皮和标定，统一单位。
+3. 将四路重量数值接入 `weight_balance_analyzer.v`。
+4. 根据实际坐垫结构和传感器量程调整 `WARN_DIFF`、`DANGER_DIFF`。

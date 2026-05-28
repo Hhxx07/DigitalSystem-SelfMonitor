@@ -7,7 +7,9 @@ module hp_engine #(
     input  wire       rst_n,
     input  wire       tick_1hz,
     input  wire       seated,
+    input  wire [2:0] seat_state,
     input  wire [9:0] distance_cm,
+    input  wire [2:0] torso_hp_penalty,
     input  wire       sim_fast,
     output reg  [7:0] hp,
     output wire       hp_zero_alarm,
@@ -17,11 +19,28 @@ module hp_engine #(
     localparam [1:0] POSTURE_SAFE   = 2'd0;
     localparam [1:0] POSTURE_WARN   = 2'd1;
     localparam [1:0] POSTURE_DANGER = 2'd2;
+    localparam [2:0] ST_IDLE         = 3'd0;
 
     reg [5:0] sec_cnt;
     reg       minute_tick;
+    reg signed [5:0] hp_delta;
+    reg [7:0] hp_delta_abs;
 
     assign hp_zero_alarm = (hp == 8'd0);
+
+    always @(*) begin
+        if (distance_cm > 10'd50)
+            hp_delta = 6'sd1 - {3'd0, torso_hp_penalty};
+        else if (distance_cm >= 10'd30)
+            hp_delta = -6'sd1 - {3'd0, torso_hp_penalty};
+        else
+            hp_delta = -6'sd3 - {3'd0, torso_hp_penalty};
+
+        if (hp_delta < 0)
+            hp_delta_abs = -hp_delta;
+        else
+            hp_delta_abs = hp_delta;
+    end
 
     always @(*) begin
         if (distance_cm > 10'd50)
@@ -54,20 +73,17 @@ module hp_engine #(
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             hp <= INIT_HP;
+        end else if (seat_state == ST_IDLE) begin
+            hp <= 8'd100;
         end else if (minute_tick && seated) begin
-            if (distance_cm > 10'd50) begin
-                if (hp < 8'd100)
-                    hp <= hp + 8'd1;
-                else
+            if (hp_delta >= 0) begin
+                if ((hp + hp_delta_abs) >= 8'd100)
                     hp <= 8'd100;
-            end else if (distance_cm >= 10'd30) begin
-                if (hp > 8'd0)
-                    hp <= hp - 8'd1;
                 else
-                    hp <= 8'd0;
+                    hp <= hp + hp_delta_abs;
             end else begin
-                if (hp > 8'd3)
-                    hp <= hp - 8'd3;
+                if (hp > hp_delta_abs)
+                    hp <= hp - hp_delta_abs;
                 else
                     hp <= 8'd0;
             end

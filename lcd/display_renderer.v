@@ -17,12 +17,15 @@ module display_renderer #(
     input  wire [7:0]  hour,
     input  wire [7:0]  minute,
     input  wire [7:0]  second,
+    input  wire        seated,
     input  wire [2:0]  seat_state,
     input  wire [15:0] sit_time_min,
     input  wire [5:0]  sit_time_sec,
     input  wire [15:0] away_time_min,
     input  wire [5:0]  away_time_sec,
     input  wire [9:0]  distance_cm,
+    input  wire [9:0]  shoulder_diff_cm,
+    input  wire [1:0]  torso_state,
     input  wire [1:0]  posture_level,
     input  wire [7:0]  hp,
     input  wire        hp_zero_alarm,
@@ -67,6 +70,7 @@ module display_renderer #(
     wire [7:0] font_bits;
     wire       text_on;
     wire       blink_on;
+    wire       display_distance;
     wire [15:0] hp_bar_width;
 
     wire [3:0] year_th = (year / 16'd1000) % 16'd10;
@@ -110,11 +114,16 @@ module display_renderer #(
     wire [3:0] dist_h  = (distance_cm / 10'd100) % 10'd10;
     wire [3:0] dist_t  = (distance_cm / 10'd10)  % 10'd10;
     wire [3:0] dist_o  = distance_cm % 10'd10;
+    wire [3:0] torso_diff_th = shoulder_diff_cm / 10'd1000;
+    wire [3:0] torso_diff_h  = (shoulder_diff_cm / 10'd100) % 10'd10;
+    wire [3:0] torso_diff_t  = (shoulder_diff_cm / 10'd10)  % 10'd10;
+    wire [3:0] torso_diff_o  = shoulder_diff_cm % 10'd10;
     wire [3:0] hp_h    = hp / 8'd100;
     wire [3:0] hp_t    = (hp / 8'd10) % 8'd10;
     wire [3:0] hp_o    = hp % 8'd10;
 
     assign blink_on     = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
+    assign display_distance = seated;
     assign hp_bar_width = (hp * 16'd110) / 16'd100;
     assign text_on      = font_bits[3'd7 - font_col];
 
@@ -178,6 +187,29 @@ module display_renderer #(
                     case (pos) 4'd0: posture_char = "D"; 4'd1: posture_char = "A"; 4'd2: posture_char = "N"; 4'd3: posture_char = "G"; 4'd4: posture_char = "E"; 4'd5: posture_char = "R"; default: posture_char = " "; endcase
                 end
                 default: posture_char = " ";
+            endcase
+        end
+    endfunction
+
+    function [7:0] torso_char;
+        input [1:0] st;
+        input [3:0] pos;
+        begin
+            torso_char = 8'h20;
+            case (st)
+                2'd0: begin // GOOD
+                    case (pos) 4'd0: torso_char = "G"; 4'd1: torso_char = "O"; 4'd2: torso_char = "O"; 4'd3: torso_char = "D"; default: torso_char = " "; endcase
+                end
+                2'd1: begin // LEAN
+                    case (pos) 4'd0: torso_char = "L"; 4'd1: torso_char = "E"; 4'd2: torso_char = "A"; 4'd3: torso_char = "N"; default: torso_char = " "; endcase
+                end
+                2'd2: begin // SIDE
+                    case (pos) 4'd0: torso_char = "S"; 4'd1: torso_char = "I"; 4'd2: torso_char = "D"; 4'd3: torso_char = "E"; default: torso_char = " "; endcase
+                end
+                2'd3: begin // TWIST
+                    case (pos) 4'd0: torso_char = "T"; 4'd1: torso_char = "W"; 4'd2: torso_char = "I"; 4'd3: torso_char = "S"; 4'd4: torso_char = "T"; default: torso_char = " "; endcase
+                end
+                default: torso_char = " ";
             endcase
         end
     endfunction
@@ -286,22 +318,60 @@ module display_renderer #(
                     endcase
                 end
                 4'd10: begin
-                    case (col)
-                        4'd0: char_at = "D";
-                        4'd1: char_at = "I";
-                        4'd2: char_at = "S";
-                        4'd3: char_at = "T";
-                        4'd4: char_at = " ";
-                        4'd5: char_at = ascii_digit(dist_th);
-                        4'd6: char_at = ascii_digit(dist_h);
-                        4'd7: char_at = ascii_digit(dist_t);
-                        4'd8: char_at = ascii_digit(dist_o);
-                        4'd9: char_at = "C";
-                        4'd10: char_at = "M";
-                        default: char_at = " ";
-                    endcase
+                    if (display_distance) begin
+                        case (col)
+                            4'd0: char_at = "T";
+                            4'd1: char_at = "D";
+                            4'd2: char_at = "I";
+                            4'd3: char_at = "F";
+                            4'd4: char_at = " ";
+                            4'd5: char_at = ascii_digit(torso_diff_th);
+                            4'd6: char_at = ascii_digit(torso_diff_h);
+                            4'd7: char_at = ascii_digit(torso_diff_t);
+                            4'd8: char_at = ascii_digit(torso_diff_o);
+                            4'd9: char_at = "C";
+                            4'd10: char_at = "M";
+                            default: char_at = " ";
+                        endcase
+                    end else begin
+                        char_at = " ";
+                    end
                 end
                 4'd11: begin
+                    if (display_distance) begin
+                        case (col)
+                            4'd0: char_at = "T";
+                            4'd1: char_at = "O";
+                            4'd2: char_at = "R";
+                            4'd3: char_at = "S";
+                            4'd4: char_at = " ";
+                            default: char_at = torso_char(torso_state, col - 4'd5);
+                        endcase
+                    end else begin
+                        char_at = " ";
+                    end
+                end
+                4'd12: begin
+                    if (display_distance) begin
+                        case (col)
+                            4'd0: char_at = "D";
+                            4'd1: char_at = "I";
+                            4'd2: char_at = "S";
+                            4'd3: char_at = "T";
+                            4'd4: char_at = " ";
+                            4'd5: char_at = ascii_digit(dist_th);
+                            4'd6: char_at = ascii_digit(dist_h);
+                            4'd7: char_at = ascii_digit(dist_t);
+                            4'd8: char_at = ascii_digit(dist_o);
+                            4'd9: char_at = "C";
+                            4'd10: char_at = "M";
+                            default: char_at = " ";
+                        endcase
+                    end else begin
+                        char_at = " ";
+                    end
+                end
+                4'd13: begin
                     case (col)
                         4'd0: char_at = "H";
                         4'd1: char_at = "P";

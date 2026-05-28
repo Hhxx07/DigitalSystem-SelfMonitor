@@ -1,6 +1,6 @@
 ﻿# 超声波测距子系统说明
 
-本目录是超声波测距模块，用于给 LCD 健康坐姿系统提供当前距离 `distance_cm`。距离会在 LCD 屏幕上显示为 `DIST xxxxCM`，不再通过串口重复输出。
+本目录是超声波测距模块，用于给 LCD 健康坐姿系统提供距离数据。当前系统使用三路超声波：正前方测量人体前方距离，左右前方 45 度测量左右肩方向距离，并用左右差值判断躯干状态。
 
 ## 硬件条件
 
@@ -27,7 +27,8 @@
 ├── top_Ranging.v     测距子系统顶层，连接 Trig、Echo 和距离计算
 ├── trig_generator.v  周期性产生 Trig 触发脉冲
 ├── signal_sync.v     对 Echo 做同步和上升/下降沿检测
-└── distance_calc.v   根据 Echo 高电平宽度计算距离，单位 cm
+├── distance_calc.v   根据 Echo 高电平宽度计算距离，单位 cm
+└── torso_posture_analyzer.v 根据左右肩距差判断躯干状态和 HP 额外扣分
 ```
 
 ## 顶层接口
@@ -63,10 +64,46 @@ module top_Ranging(
    - `neg_edge`：Echo 下降沿，表示停止计时。
 4. `distance_calc.v` 在 Echo 高电平期间计数，并换算为厘米。
 5. 测距完成后，`distance_cm` 更新为最新距离。
-6. LCD 顶层 `health_lcd_top.v` 使用该距离更新：
-   - 姿势状态 `POST SAFE/WARN/DANGER`
-   - HP 加减
-   - LCD 上的 `DIST xxxxCM` 显示
+6. LCD 顶层 `health_lcd_top.v` 实例化三份 `top_Ranging.v`：
+   - 正前方：`ultrasonic_front_echo/trig`
+   - 左前 45 度：`ultrasonic_left45_echo/trig`
+   - 右前 45 度：`ultrasonic_right45_echo/trig`
+7. 正前方距离用于 `POST SAFE/WARN/DANGER`、HP 基础加减和 `DIST xxxxCM` 显示。
+8. 左右 45 度距离进入 `torso_posture_analyzer.v`，计算肩距差值和躯干状态。
+
+## 躯干状态判断
+
+`torso_posture_analyzer.v` 输入三路距离：
+
+```text
+front_distance_cm
+left45_distance_cm
+right45_distance_cm
+```
+
+当前判断主要使用左右 45 度肩距的绝对差值：
+
+```text
+shoulder_diff_cm = abs(left45_distance_cm - right45_distance_cm)
+```
+
+默认阈值：
+
+| 差值范围 | 显示 | 含义 | HP 额外影响 |
+|---|---|---|---:|
+| `< 5cm` | `GOOD` | 躯干基本正常 | 0 |
+| `5..11cm` | `LEAN` | 微倾 | 每分钟 -1 |
+| `12..21cm` | `SIDE` | 侧弯 | 每分钟 -2 |
+| `>= 22cm` | `TWIST` | 扭转 | 每分钟 -3 |
+
+LCD 会显示：
+
+```text
+TDIF xxxxCM
+TORS GOOD/LEAN/SIDE/TWIST
+```
+
+这些显示只在 `seated=1` 时出现。
 
 ## 距离计算方式
 
@@ -105,41 +142,57 @@ else
 
 ## 和 LCD 顶层的关系
 
-`health_lcd_top.v` 实例化本目录的 `top_Ranging.v`：
+`health_lcd_top.v` 实例化三份 `top_Ranging.v`：
 
 ```verilog
-top_Ranging u_ultrasonic (
-    .clk(clk),
-    .rst_n(rst_n),
-    .ultrasonic_echo(ultrasonic_echo),
-    .ultrasonic_trig(ultrasonic_trig),
-    .distance_cm(ultrasonic_distance_cm)
-);
+top_Ranging u_ultrasonic_front (...);
+top_Ranging u_ultrasonic_left45 (...);
+top_Ranging u_ultrasonic_right45 (...);
 ```
 
-为了兼容 LCD 显示和 HP 模块的 10-bit 距离接口，顶层会把 16-bit 距离做饱和：
+正前方距离饱和到 10-bit 后给 LCD 和 HP 使用：
 
 ```verilog
 assign posture_distance_cm =
-    (ultrasonic_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_distance_cm[9:0];
+    (ultrasonic_front_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_front_distance_cm[9:0];
 ```
 
-因此 LCD 显示和 HP 判断使用 0 到 1023 cm 范围。
+左右肩方向距离饱和到 10-bit 后进入躯干分析模块：
+
+```verilog
+torso_posture_analyzer u_torso (
+    .seated(seated),
+    .front_distance_cm(posture_distance_cm),
+    .left45_distance_cm(shoulder_left45_distance_cm),
+    .right45_distance_cm(shoulder_right45_distance_cm),
+    .shoulder_diff_cm(shoulder_diff_cm),
+    .torso_state(torso_state),
+    .torso_hp_penalty(torso_hp_penalty)
+);
+```
 
 ## 上板连接建议
 
 连接超声波模块时：
 
-- FPGA `ultrasonic_trig` 接模块 `Trig`。
-- FPGA `ultrasonic_echo` 接模块 `Echo`。
+- FPGA `ultrasonic_front_trig` 接正前方模块 `Trig`。
+- FPGA `ultrasonic_front_echo` 接正前方模块 `Echo`。
+- FPGA `ultrasonic_left45_trig` 接左前 45 度模块 `Trig`。
+- FPGA `ultrasonic_left45_echo` 接左前 45 度模块 `Echo`。
+- FPGA `ultrasonic_right45_trig` 接右前 45 度模块 `Trig`。
+- FPGA `ultrasonic_right45_echo` 接右前 45 度模块 `Echo`。
 - FPGA GND 必须和超声波模块 GND 共地。
 - 如果 Echo 是 5 V 电平，必须通过分压或电平转换接入 FPGA。
 
 Vivado 工程中需要加入本目录所有 `.v` 文件，并在 XDC 中约束：
 
 ```tcl
-set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_echo]
-set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_trig]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_front_echo]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_front_trig]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_left45_echo]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_left45_trig]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_right45_echo]
+set_property IOSTANDARD LVCMOS33 [get_ports ultrasonic_right45_trig]
 ```
 
 具体 `PACKAGE_PIN` 按实际 EGO1 接线填写。

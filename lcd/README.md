@@ -2,7 +2,7 @@
 
 本目录是一套基于 Verilog-2001 的 LCD 显示系统，用于 Xilinx Artix-7 / EGO1 FPGA，驱动 1.44 inch、128x128、ST7735S 控制器的 TFT LCD。LCD 通信方式为 4-wire SPI，只写不读，像素格式为 RGB565。
 
-系统显示内容包括日期、时间、座位状态、学习计时、离座计时、HP 数值和 HP 横向血条。
+系统显示内容包括日期、时间、座位状态、学习计时、离座计时、三路超声波测距推导的姿势/躯干状态、HP 数值和 HP 横向血条。
 
 ## 文件关系
 
@@ -12,11 +12,13 @@
 health_lcd_top.v
 ├── rtc_clock.v          产生 1 Hz tick，并维护年月日时分秒
 ├── seat_fsm.v           维护座位状态、学习时间和离座时间
-├── ../超声波/top_Ranging.v  驱动超声波模块并输出距离
-├── hp_engine.v          根据距离和入座状态更新 HP
+├── ../超声波/top_Ranging.v              驱动单个超声波模块并输出距离
+├── ../超声波/torso_posture_analyzer.v   根据左右肩距差判断躯干状态
+├── ../称重/weight_balance_analyzer.v     根据四角称重值输出重心分布
+├── hp_engine.v          根据距离、躯干状态和入座状态更新 HP
 ├── st7735_init.v        复位并初始化 ST7735S LCD
 ├── display_renderer.v   生成整屏 128x128 RGB565 显示数据
-│   └── font_rom.v       8x8 ASCII 字模 ROM
+│── font_rom.v           8x8 ASCII 字模 ROM
 └── st7735_spi.v         低层 SPI 8-bit 字节发送器
 ```
 
@@ -53,9 +55,21 @@ module health_lcd_top #(
     input  wire rst_n,
     input  wire pressure_ok,
     input  wire ir_ok,
-    input  wire ultrasonic_echo,
+    input  wire ultrasonic_front_echo,
+    input  wire ultrasonic_left45_echo,
+    input  wire ultrasonic_right45_echo,
+    input  wire [15:0] weight_left_front,
+    input  wire [15:0] weight_left_rear,
+    input  wire [15:0] weight_right_front,
+    input  wire [15:0] weight_right_rear,
     input  wire sim_fast,
-    output wire ultrasonic_trig,
+    output wire ultrasonic_front_trig,
+    output wire ultrasonic_left45_trig,
+    output wire ultrasonic_right45_trig,
+    output wire [16:0] weight_front_back_diff,
+    output wire [16:0] weight_left_right_diff,
+    output wire [1:0]  weight_front_back_balance,
+    output wire [1:0]  weight_left_right_balance,
     output wire lcd_cs_n,
     output wire lcd_rst_n,
     output wire lcd_dc,
@@ -73,9 +87,21 @@ module health_lcd_top #(
 | `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
 | `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
 | `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
-| `ultrasonic_echo` | input | 1 | 超声波模块的 Echo 输入。Echo 高电平宽度代表超声波往返时间，内部测距模块据此计算距离。 |
+| `ultrasonic_front_echo` | input | 1 | 正前方超声波 Echo，用于测量人体前方距离。 |
+| `ultrasonic_left45_echo` | input | 1 | 左前方 45 度超声波 Echo，用于测量左肩方向距离。 |
+| `ultrasonic_right45_echo` | input | 1 | 右前方 45 度超声波 Echo，用于测量右肩方向距离。 |
+| `weight_left_front` | input | 16 | 左前称重数值接口，供称重模块接入。 |
+| `weight_left_rear` | input | 16 | 左后称重数值接口，供称重模块接入。 |
+| `weight_right_front` | input | 16 | 右前称重数值接口，供称重模块接入。 |
+| `weight_right_rear` | input | 16 | 右后称重数值接口，供称重模块接入。 |
 | `sim_fast` | input | 1 | 仿真加速开关。为 1 时，`seat_fsm.v` 和 `hp_engine.v` 把 1 秒当作 1 分钟；上板时应接 0。 |
-| `ultrasonic_trig` | output | 1 | 超声波模块的 Trig 输出。顶层内部周期性产生触发脉冲，让超声波模块开始一次测距。 |
+| `ultrasonic_front_trig` | output | 1 | 正前方超声波 Trig。 |
+| `ultrasonic_left45_trig` | output | 1 | 左前方 45 度超声波 Trig。 |
+| `ultrasonic_right45_trig` | output | 1 | 右前方 45 度超声波 Trig。 |
+| `weight_front_back_diff` | output | 17 | 前后重量和的绝对差值。 |
+| `weight_left_right_diff` | output | 17 | 左右重量和的绝对差值。 |
+| `weight_front_back_balance` | output | 2 | 前后重心分布等级：0 居中、1 偏移、2 严重偏移。 |
+| `weight_left_right_balance` | output | 2 | 左右重心分布等级：0 居中、1 偏移、2 严重偏移。 |
 | `lcd_cs_n` | output | 1 | LCD SPI 片选，低有效。发送一个字节期间拉低。 |
 | `lcd_rst_n` | output | 1 | LCD 硬件复位，低有效。由 `st7735_init.v` 控制。 |
 | `lcd_dc` | output | 1 | LCD 命令/数据选择。0 表示 command，1 表示 data。 |
@@ -91,17 +117,19 @@ assign seated = pressure_ok & ir_ok;
 
 只有两个输入都为 1，系统才认为用户处于入座状态。`seated` 同时送到 `seat_fsm.v` 和 `hp_engine.v`。
 
-距离不再由外部 `distance_cm` 输入直接给出，而是由内部超声波测距子系统产生：
+距离由内部三路超声波测距子系统产生：
 
 ```verilog
-top_Ranging u_ultrasonic (...);
+top_Ranging u_ultrasonic_front (...);
+top_Ranging u_ultrasonic_left45 (...);
+top_Ranging u_ultrasonic_right45 (...);
 ```
 
-`top_Ranging` 输出 16-bit `ultrasonic_distance_cm`。LCD 显示和 HP 计算使用截位/饱和后的 10-bit `posture_distance_cm`：
+正前方 `ultrasonic_front_distance_cm` 用于原来的正面距离/姿势距离判断；左右 45 度距离用于肩距差值和躯干状态判断。LCD 显示和 HP 计算使用截位/饱和后的 10-bit `posture_distance_cm`：
 
 ```verilog
 assign posture_distance_cm =
-    (ultrasonic_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_distance_cm[9:0];
+    (ultrasonic_front_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_front_distance_cm[9:0];
 ```
 
 ## 参数说明
@@ -217,7 +245,7 @@ away_time_min / away_time_sec 当前离座时间
 
 ## hp_engine.v
 
-`hp_engine.v` 根据入座状态和距离更新 HP。
+`hp_engine.v` 根据入座状态、座位状态和距离更新 HP。
 
 输出：
 
@@ -228,11 +256,15 @@ away_time_min / away_time_sec 当前离座时间
 规则：
 
 ```text
+seat_state=ST_IDLE：HP 直接恢复到 100，保证下一次开始学习时为满值
 seated=0：HP 不更新
 seated=1 且 posture_distance_cm > 50：每分钟 HP +1，最大 100
 seated=1 且 30 <= posture_distance_cm <= 50：每分钟 HP -1，最小 0
 seated=1 且 posture_distance_cm < 30：每分钟 HP -3，最小 0
+躯干状态额外扣分：微倾 -1，侧弯 -2，扭转 -3
 ```
+
+这里的“下一次开始学习 HP 值变满”由 `seat_state==ST_IDLE` 实现。用户离开达到 30 分钟后，`seat_fsm.v` 会进入 `ST_IDLE` 并清空座位所有权；此时 `hp_engine.v` 把 HP 恢复为 100。
 
 坐姿等级：
 
@@ -324,10 +356,11 @@ bits：该行 8 个像素的点阵数据
 | 控制 | `clk`, `rst_n`, `init_done` | 控制渲染状态机运行。只有 `init_done=1` 后才刷新画面。 |
 | SPI 握手 | `spi_busy`, `spi_done` | 和 `st7735_spi.v` 做字节发送握手。 |
 | 显示数据 | `year/month/day/hour/minute/second` | 显示日期和时间。 |
+| 显示数据 | `seated` | 控制是否显示当前距离；人不在时隐藏距离行。 |
 | 显示数据 | `seat_state` | 显示状态字符串。 |
 | 显示数据 | `posture_level` | 显示姿势状态字符串，和久坐状态分开。 |
 | 显示数据 | `sit_time_min/sit_time_sec`, `away_time_min/away_time_sec` | 显示学习时间、离座时间和当前状态计时器，格式为 `mmmm:ss`。 |
-| 显示数据 | `distance_cm` | 显示当前超声波距离，格式为 `DIST xxxxCM`。 |
+| 显示数据 | `distance_cm` | 显示当前超声波距离，格式为 `DIST xxxxCM`；仅入座状态显示。 |
 | 显示数据 | `hp`, `hp_zero_alarm` | 显示 HP 数值、血条颜色和报警闪烁。 |
 
 输出给 SPI 的信号：
@@ -452,8 +485,10 @@ font_row = pix_y[2:0];  // 0..7
 字符行 7：空
 字符行 8：NOW 0000:00
 字符行 9：空
-字符行 10：DIST 0060CM
-字符行 11：HP 100
+字符行 10：TDIF 0012CM，未入座时整行留空
+字符行 11：TORS LEAN / SIDE / TWIST / GOOD，未入座时整行留空
+字符行 12：DIST 0060CM，未入座时整行留空
+字符行 13：HP 100
 像素 y=112..123：HP 横向血条
 其他区域：黑色背景
 ```
@@ -465,6 +500,17 @@ font_row = pix_y[2:0];  // 0..7
 - 状态为 `ST_IDLE` 时，显示 `0000:00`。
 
 `DIST 0060CM` 显示当前超声波测距值。显示宽度固定为 4 位十进制数字，因此 60 cm 会显示为 `0060CM`，最大可覆盖 LCD 渲染输入的 `1023CM`。
+
+`TDIF 0012CM` 显示左右 45 度肩膀方向测距的绝对差值。`TORS ...` 显示根据这个差值判断出的躯干状态：
+
+| 躯干显示 | 含义 | HP 额外影响 |
+|---|---|---:|
+| `GOOD` | 左右肩距差很小 | 0 |
+| `LEAN` | 微倾 | 每分钟额外 -1 |
+| `SIDE` | 侧弯 | 每分钟额外 -2 |
+| `TWIST` | 扭转 | 每分钟额外 -3 |
+
+距离和躯干相关行由顶层 `seated = pressure_ok & ir_ok` 控制。只有 `seated=1` 时显示；如果人不在座位上，LCD 不显示这些测距数据，避免把空座位或上一笔距离误解为当前坐姿距离。
 
 状态显示被拆成两类，避免“久坐”和“姿势不当”混在一个字段里：
 
@@ -503,8 +549,10 @@ font_row = pix_y[2:0];  // 0..7
 - 第 5 行返回 `SIT 0000:00`。
 - 第 6 行返回 `AWAY 0000:00`。
 - 第 8 行返回 `NOW 0000:00`。
-- 第 10 行返回 `DIST xxxxCM`。
-- 第 11 行返回 `HP xxx`。
+- 第 10 行返回 `TDIF xxxxCM`。
+- 第 11 行返回 `TORS ...`。
+- 第 12 行返回 `DIST xxxxCM`。
+- 第 13 行返回 `HP xxx`。
 
 数字不是用十进制字符串库生成的，而是在硬件中用除法和取模拆成各个位：
 
@@ -616,6 +664,7 @@ blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
 - LCD 初始化完成。
 - HP 在安全、警戒、危险距离下分别按规则变化。
 - HP 到 0 后饱和并触发报警。
+- 状态进入 `ST_IDLE` 后 HP 恢复为 100。
 - 坐满 45 分钟进入久坐。
 - 坐满 60 分钟进入过度久坐。
 - 离开 20 分钟进入长时间离开。
@@ -627,7 +676,7 @@ blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
 
 ```powershell
 cd D:\UserDate\DeskTop\数字系统Project\src\lcd
-iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v
+iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v ..\称重\weight_balance_analyzer.v
 vvp tb_health_lcd_top.vvp
 ```
 
