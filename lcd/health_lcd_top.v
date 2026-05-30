@@ -1,5 +1,17 @@
 `timescale 1ns / 1ps
 
+// 健康坐姿 LCD 系统顶层。
+// 汇总压力、红外、三路超声波和时间信息，计算座椅状态、姿态、HP，
+// 并通过 ST7735 SPI 接口刷新 128x128 LCD。
+//
+// 入座（seated）判断由三个条件共同决定：
+//   seated = ir_active && ultrasonic_seated && pressure_ok
+//
+//   ir_active:          PIR 红外时间窗口活动标志（3 分钟内有人体运动触发则为 1）
+//   ultrasonic_seated:  三路超声波距离均 < ULTRASONIC_SEATED_THRESHOLD_CM
+//   pressure_ok:        压力传感器判断结果（接口不变）
+//
+// 其中红外具有否决权：ir_active=0 时直接判无人入座。
 module health_lcd_top #(
     parameter integer CLK_HZ     = 100000000,
     parameter integer SPI_CLK_DIV = 5,
@@ -12,13 +24,16 @@ module health_lcd_top #(
     parameter integer INIT_SEC   = 0,
     parameter [7:0]   MADCTL_PARAM = 8'h00,
     parameter [15:0]  LCD_X_OFFSET = 16'd2,
-    parameter [15:0]  LCD_Y_OFFSET = 16'd1
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1,
+    parameter [11:0]  ULTRASONIC_SEATED_THRESHOLD_CM = 12'd120,
+    parameter integer PIR_WINDOW_CYCLES_FAST = 200,
+    parameter integer PIR_INACTIVE_WINDOW_SEC = 180   // PIR 无触发窗口秒数（仿真中可覆盖）
 )(
     input  wire clk,
     input  wire rst_n,
 
     input  wire pressure_ok,
-    input  wire ir_ok,
+    input  wire pir_in,      // PIR 红外传感器原始信号（替代原来的 ir_ok）
     input  wire ultrasonic_front_echo,
     input  wire ultrasonic_left45_echo,
     input  wire ultrasonic_right45_echo,
@@ -47,7 +62,12 @@ module health_lcd_top #(
     output wire lcd_blk
 );
 
+    // 系统内部状态与传感器中间量。
+    // seated 由红外活动标志、超声波距离和压力三条件共同确认。
+    // RTC/座椅 FSM/HP/超声波结果都在此顶层汇合。
     wire seated;
+    wire ir_active;         // PIR 时间窗口活动标志（3分钟内有人体运动触发则为1）
+    wire ultrasonic_seated; // 超声波入座判定（三路距离均低于阈值）
     wire tick_1hz;
     wire [15:0] year;
     wire [7:0]  month;
@@ -78,6 +98,8 @@ module health_lcd_top #(
     wire [16:0] weight_left_sum;
     wire [16:0] weight_right_sum;
 
+    // LCD 初始化、渲染器和 SPI 发送器之间的握手信号。
+    // 初始化完成前 SPI 数据来自 st7735_init，完成后切换到 display_renderer。
     wire init_done;
     wire spi_busy;
     wire spi_done;
@@ -93,16 +115,29 @@ module health_lcd_top #(
     wire       spi_dc_mux;
     wire [7:0] spi_data_mux;
 
-    assign seated = pressure_ok & ir_ok;
+    // 入座判断 = 红外活动标志 AND 超声波入座 AND 压力正常。
+    // ir_active 为 PIR 时间窗口活动标志（3 分钟内人体运动触发则为 1）。
+    // ir_active=0 时直接否决入座（红外长时间无触发，判定无人）。
+    // ultrasonic_seated 为三路超声波距离均低于 ULTRASONIC_SEATED_THRESHOLD_CM。
+    // 三者同时满足才判定为入座。
+    assign seated = ir_active && ultrasonic_seated && pressure_ok;
     assign lcd_blk = 1'b1;
+
+    // 超声波入座判定：正前方、左45度、右45度距离均低于阈值，认为座椅前方
+    // 有物体（人在座）。阈值默认为 120 cm，可滤除“无回波”的超大读数。
+    assign ultrasonic_seated = (ultrasonic_front_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM})
+                            && (ultrasonic_left45_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM})
+                            && (ultrasonic_right45_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM});
     assign posture_distance_cm = (ultrasonic_front_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_front_distance_cm[9:0];
     assign shoulder_left45_distance_cm = (ultrasonic_left45_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_left45_distance_cm[9:0];
     assign shoulder_right45_distance_cm = (ultrasonic_right45_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_right45_distance_cm[9:0];
 
+    // SPI 总线复用：初始化阶段发送控制命令，正常运行阶段发送画面刷新数据。
     assign spi_start_mux = init_done ? render_spi_start : init_spi_start;
     assign spi_dc_mux    = init_done ? render_spi_dc    : init_spi_dc;
     assign spi_data_mux  = init_done ? render_spi_data  : init_spi_data;
 
+    // 软件 RTC，提供当前日期时间和 1 Hz 节拍。
     rtc_clock #(
         .CLK_HZ(CLK_HZ),
         .INIT_YEAR(INIT_YEAR),
@@ -123,6 +158,29 @@ module health_lcd_top #(
         .second(second)
     );
 
+    // PIR 红外人体检测模块。
+    // 将 PIR 原始信号处理为 ir_active 时间窗口活动标志。
+    // 预热完成前 ir_active=0（不干扰开机流程）；
+    // 预热后统计 human_present 上升沿，窗口内无触发则 ir_active=0。
+    // PIR_INACTIVE_WINDOW_SEC 为无触发窗口秒数（仿真中可覆盖为较小值加速测试）。
+    pir_human_detector #(
+        .CLK_FREQ_HZ(CLK_HZ),
+        .WARMUP_SEC(60),
+        .STABLE_MS(100),
+        .SIM_FAST(0),
+        .INACTIVE_WINDOW_SEC(PIR_INACTIVE_WINDOW_SEC),
+        .INACTIVE_WINDOW_CYCLES_FAST(PIR_WINDOW_CYCLES_FAST)
+    ) u_pir (
+        .clk(clk),
+        .rst_n(rst_n),
+        .pir_in(pir_in),
+        .pir_raw_sync(),
+        .pir_valid(),
+        .human_present(),
+        .ir_active(ir_active)
+    );
+
+    // 座椅状态机，统计连续入座时间和离座休息时间。
     seat_fsm u_seat (
         .clk(clk),
         .rst_n(rst_n),
@@ -136,6 +194,7 @@ module health_lcd_top #(
         .sim_fast(sim_fast)
     );
 
+    // 三路超声波分别测量头部正前方、左 45 度和右 45 度距离。
     top_Ranging u_ultrasonic_front (
         .clk(clk),
         .rst_n(rst_n),
@@ -160,6 +219,7 @@ module health_lcd_top #(
         .distance_cm(ultrasonic_right45_distance_cm)
     );
 
+    // 躯干姿态分析器，用左右 45 度距离差和阈值输出姿态状态与扣分。
     torso_posture_analyzer #(
         .CLK_HZ(CLK_HZ)
     ) u_torso (
@@ -174,6 +234,7 @@ module health_lcd_top #(
         .torso_hp_penalty(torso_hp_penalty)
     );
 
+    // 压力分布分析器，计算前后/左右重量差及平衡状态，供外部观察或后续扩展使用。
     weight_balance_analyzer u_weight_balance (
         .weight_left_front(weight_left_front),
         .weight_left_rear(weight_left_rear),
@@ -189,6 +250,7 @@ module health_lcd_top #(
         .left_right_balance(weight_left_right_balance)
     );
 
+    // HP 引擎，根据坐姿距离和躯干姿态按分钟更新健康值。
     hp_engine #(
         .INIT_HP(100)
     ) u_hp (
@@ -205,6 +267,7 @@ module health_lcd_top #(
         .sim_fast(sim_fast)
     );
 
+    // ST7735 初始化序列发生器，上电后完成 LCD 复位和基本显示参数配置。
     st7735_init #(
         .CLK_HZ(CLK_HZ),
         .MADCTL_PARAM(MADCTL_PARAM),
@@ -222,6 +285,7 @@ module health_lcd_top #(
         .init_done(init_done)
     );
 
+    // LCD 画面渲染器，按帧率输出窗口设置命令和 RGB565 像素流。
     display_renderer #(
         .CLK_HZ(CLK_HZ),
         .FRAME_HZ(FRAME_HZ),
@@ -256,6 +320,7 @@ module health_lcd_top #(
         .spi_data(render_spi_data)
     );
 
+    // SPI 物理发送器，将初始化/渲染数据串行输出到 LCD 引脚。
     st7735_spi #(
         .CLK_DIV(SPI_CLK_DIV)
     ) u_spi (

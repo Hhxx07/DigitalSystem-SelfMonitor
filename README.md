@@ -37,7 +37,7 @@ lcd/health_lcd_top.v
 - 100 MHz 系统时钟 `clk`
 - 低有效复位 `rst_n`
 - 压力检测输入 `pressure_ok`
-- 红外检测输入 `ir_ok`
+- 红外检测输入 `pir_in`（PIR 原始信号，由内部模块处理为 ir_active 活动标志）
 - 正前方头部距离超声波 `ultrasonic_front_echo/trig`
 - 左前 45 度超声波 `ultrasonic_left45_echo/trig`
 - 右前 45 度超声波 `ultrasonic_right45_echo/trig`
@@ -48,8 +48,8 @@ lcd/health_lcd_top.v
 ## 数据流大纲
 
 ```text
-压力 + 红外
-  -> seated 判断
+压力 + 红外（pir_in → pir_human_detector → ir_active） + 超声波距离
+  -> seated = ir_active && ultrasonic_seated && pressure_ok
   -> seat_fsm 生成座位状态和学习/离座计时
 
 三路超声波 Echo/Trig
@@ -90,7 +90,7 @@ LCD 显示：
 
 ## 状态与策略摘要
 
-- `seated = pressure_ok & ir_ok`
+- `seated = ir_active && ultrasonic_seated && pressure_ok`（红外有否决权：ir_active=0 直接判无人）
 - 入座后进入 `STUDY`
 - 坐满 45 分钟进入久坐
 - 坐满 60 分钟进入过度久坐

@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// ST7735 LCD 初始化控制器。
+// 上电后先控制 LCD 复位脚，再按顺序通过 SPI 发送软件复位、退出睡眠、
+// 像素格式、扫描方向、显示窗口和开显示等命令。
 module st7735_init #(
     parameter integer CLK_HZ = 100000000,
     parameter [7:0]   MADCTL_PARAM = 8'h00,
@@ -17,6 +20,7 @@ module st7735_init #(
     output reg        init_done
 );
 
+    // 初始化状态机：硬复位低/高电平延时、发送命令、等待 SPI 完成、命令后延时、完成。
     localparam [2:0] S_RESET_LOW  = 3'd0;
     localparam [2:0] S_RESET_HIGH = 3'd1;
     localparam [2:0] S_SEND       = 3'd2;
@@ -35,6 +39,7 @@ module st7735_init #(
     reg [31:0] delay_cnt;
     reg [31:0] delay_target;
 
+    // 毫秒延时转换为时钟周期数，保证低频仿真参数下也至少等待一个周期。
     function integer ms_to_cycles;
         input integer ms;
         integer tmp;
@@ -47,6 +52,8 @@ module st7735_init #(
         end
     endfunction
 
+    // 初始化命令/参数序列。
+    // 序列中既包含命令字，也包含紧跟命令的数据参数。
     function [7:0] seq_data;
         input [4:0] idx;
         begin
@@ -74,6 +81,8 @@ module st7735_init #(
         end
     endfunction
 
+    // 当前序列项的 D/C 标志。
+    // 复位、睡眠退出、颜色格式、地址窗口和显示开关为命令，其余为参数。
     function seq_dc;
         input [4:0] idx;
         begin
@@ -86,6 +95,7 @@ module st7735_init #(
         end
     endfunction
 
+    // 某些 ST7735 命令要求发送后等待一段时间，这里给出对应延时。
     function [31:0] delay_after;
         input [4:0] idx;
         begin
@@ -98,6 +108,8 @@ module st7735_init #(
         end
     endfunction
 
+    // 初始化主状态机。
+    // 通过 spi_start/spi_data/spi_dc 驱动共用 SPI 发送器，所有序列完成后拉高 init_done。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state        <= S_RESET_LOW;

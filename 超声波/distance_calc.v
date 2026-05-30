@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// Echo 脉宽到距离的换算模块。
+// 输入为已经同步并提取边沿的 Echo 上升沿/下降沿信号；模块在 Echo 高电平期间计数，
+// 按 100 MHz 时钟下约 5600 个周期对应 1 cm 的比例输出厘米距离。
 module distance_calc(
     input  wire        clk_100m,
     input  wire        RST,
@@ -9,6 +12,8 @@ module distance_calc(
     output reg         data_valid
 );
 
+    // 三段式测量状态：S0 等待 Echo 上升沿，S1 统计 Echo 高电平持续时间，
+    // S2 锁存本次距离并给出 data_valid 单周期有效脉冲。
     parameter S0 = 2'b00;
     parameter S1 = 2'b01;
     parameter S2 = 2'b10;
@@ -18,6 +23,9 @@ module distance_calc(
     reg [15:0] dis_reg;
     reg [15:0] cnt_17k;
 
+    // 主测距状态机。
+    // cnt_17k 用来把高速时钟周期换算成厘米刻度，cnt 保存厘米计数；
+    // 下降沿到来后进入 S2，将本次计数写入距离寄存器。
     always @(posedge clk_100m or negedge RST) begin
         if (!RST) begin
             cnt_17k <= 16'd0;
@@ -60,6 +68,7 @@ module distance_calc(
         end
     end
 
+    // 在锁存状态直接输出最新计数，其余时间保持上一次稳定距离。
     assign data = (curr_state == S2) ? cnt : dis_reg;
 
 endmodule

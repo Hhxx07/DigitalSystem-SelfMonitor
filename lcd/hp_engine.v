@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// 健康值计算引擎。
+// 根据头部距离、躯干姿态扣分和入座状态，每分钟更新一次 HP；
+// 坐姿好时恢复，坐姿差时扣减，离座空闲时恢复到满值。
 module hp_engine #(
     parameter integer INIT_HP  = 100
 )(
@@ -16,6 +19,8 @@ module hp_engine #(
     output reg  [1:0] posture_level
 );
 
+    // 姿态等级和座椅空闲状态编码。
+    // 距离阈值只处理头部前向距离，躯干附加扣分由 torso_hp_penalty 输入。
     localparam [1:0] POSTURE_SAFE   = 2'd0;
     localparam [1:0] POSTURE_WARN   = 2'd1;
     localparam [1:0] POSTURE_DANGER = 2'd2;
@@ -30,6 +35,9 @@ module hp_engine #(
 
     assign hp_zero_alarm = (hp == 8'd0);
 
+    // 组合计算本分钟 HP 变化量。
+    // 安全距离基础 +1，警告距离基础 -1，危险距离基础 -3，
+    // 再叠加躯干姿态扣分；同时取绝对值用于后续饱和加减。
     always @(*) begin
         if (distance_cm >= HEAD_WARN_CM)
             hp_delta = 6'sd1 - {3'd0, torso_hp_penalty};
@@ -44,6 +52,7 @@ module hp_engine #(
             hp_delta_abs = hp_delta;
     end
 
+    // 将头部距离映射为显示用姿态等级：安全、警告、危险。
     always @(*) begin
         if (distance_cm >= HEAD_WARN_CM)
             posture_level = POSTURE_SAFE;
@@ -53,6 +62,8 @@ module hp_engine #(
             posture_level = POSTURE_DANGER;
     end
 
+    // 将 1 Hz tick 聚合成分钟 tick。
+    // 仿真快速模式下每个 tick 都当作一分钟，便于测试 HP 变化。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             sec_cnt     <= 6'd0;
@@ -72,6 +83,9 @@ module hp_engine #(
         end
     end
 
+    // HP 饱和更新。
+    // 空闲状态直接恢复 100；入座且到达分钟 tick 时按 hp_delta 加减，
+    // 上限钳制到 100，下限钳制到 0。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             hp <= INIT_HP;

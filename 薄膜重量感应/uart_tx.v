@@ -1,3 +1,6 @@
+// UART 发送器。
+// 按 8N1 格式发送一个字节：1 位起始位、8 位数据位、1 位停止位；
+// tx_start 拉高时锁存 tx_data，busy 表示发送中，done 为发送完成单周期脉冲。
 module uart_tx #(
     parameter integer CLK_FREQ_HZ = 100_000_000,
     parameter integer BAUD_RATE   = 115_200
@@ -13,6 +16,7 @@ module uart_tx #(
 
     localparam integer CLKS_PER_BIT = CLK_FREQ_HZ / BAUD_RATE;
 
+    // UART 字节发送状态机编码。
     localparam [2:0] S_IDLE  = 3'd0;
     localparam [2:0] S_START = 3'd1;
     localparam [2:0] S_DATA  = 3'd2;
@@ -24,6 +28,9 @@ module uart_tx #(
     reg [2:0] bit_index;
     reg [7:0] data_latch;
 
+    // 主发送状态机。
+    // 空闲时 TX 保持高电平；发送时按 CLKS_PER_BIT 精确维持每一位宽度，
+    // 数据位从低位到高位依次输出，最后发送停止位并产生 done。
     always @(posedge clk) begin
         if (reset) begin
             state <= S_IDLE;

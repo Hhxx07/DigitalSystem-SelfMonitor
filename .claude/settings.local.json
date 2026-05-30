@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(iverilog -g2001 -Wall -o tb_pir_human_detector.vvp tb_pir_human_detector.v pir_human_detector.v)",
+      "Bash(vvp tb_pir_human_detector.vvp)",
+      "Bash(iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v \"..\\\\红外检测\\\\pir_human_detector.v\" \"..\\\\超声波\\\\top_Ranging.v\" \"..\\\\超声波\\\\trig_generator.v\" \"..\\\\超声波\\\\signal_sync.v\" \"..\\\\超声波\\\\distance_calc.v\" \"..\\\\超声波\\\\torso_posture_analyzer.v\" \"..\\\\称重\\\\weight_balance_analyzer.v\")",
+      "Bash(iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v \"..\\\\红外检测\\\\pir_human_detector.v\" \"..\\\\超声波\\\\top_Ranging.v\" \"..\\\\超声波\\\\trig_generator.v\" \"..\\\\超声波\\\\signal_sync.v\" \"..\\\\超声波\\\\distance_calc.v\" \"..\\\\超声波\\\\torso_posture_analyzer.v\")",
+      "Bash(vvp tb_health_lcd_top.vvp)",
+      "Bash(iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v \"../红外检测/pir_human_detector.v\" \"../超声波/top_Ranging.v\" \"../超声波/trig_generator.v\" \"../超声波/signal_sync.v\" \"../超声波/distance_calc.v\" \"../超声波/torso_posture_analyzer.v\" \"../称重/weight_balance_analyzer.v\")"
+    ]
+  }
+}
