@@ -9,7 +9,7 @@
 // 参数: CLK_HZ — 系统时钟频率; INIT_* — 上电初始时间
 // ============================================================
 module rtc_clock #(
-    parameter integer CLK_HZ     = 100000000,
+    parameter integer CLK_HZ     = 1000000,
     parameter integer INIT_YEAR  = 2026,
     parameter integer INIT_MONTH = 1,
     parameter integer INIT_DAY   = 1,
@@ -31,6 +31,7 @@ module rtc_clock #(
     reg [31:0] div_cnt;
 
     // 判断闰年：能被 400 整除 OR (能被 4 整除 AND 不能被 100 整除)
+    //用来控制2月是28还是29天
     function is_leap_year;
         input [15:0] y;
         begin
@@ -46,6 +47,7 @@ module rtc_clock #(
     endfunction
 
     // 返回指定年月的天数（2 月考虑闰年）
+    //用来控制后面的月份的上限是几天
     function [7:0] days_in_month;
         input [15:0] y;
         input [7:0]  m;
@@ -60,6 +62,7 @@ module rtc_clock #(
     endfunction
 
     // 每秒进位：秒->分->时->日->月->年，逐级溢出
+    // 这个任务实现了对时间的每一位的输出。
     task step_one_second;
         begin
             if (second < 8'd59) begin
@@ -104,7 +107,7 @@ module rtc_clock #(
             second   <= INIT_SEC;
         end else begin
             tick_1hz <= 1'b0;
-            if (div_cnt >= (CLK_HZ - 1)) begin
+            if (div_cnt >= (CLK_HZ - 1)) begin//实现用CLK_HZ作为计数分频器的上限参照100_000_000对应1s
                 div_cnt  <= 32'd0;
                 tick_1hz <= 1'b1;
                 step_one_second;

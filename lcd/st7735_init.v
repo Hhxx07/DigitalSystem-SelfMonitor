@@ -1,16 +1,10 @@
 `timescale 1ns / 1ps
 
-// ============================================================
-// 模块: st7735_init
-// 功能: ST7735 LCD 上电初始化序列控制器
-//       依次执行硬件复位、发送 18 条 SPI 初始化命令（含延时）
-// 输入: clk, rst_n, spi_busy, spi_done
-// 输出: spi_start/dc/data(驱动 SPI 层), lcd_rst_n(硬件复位), init_done(初始化完成标志)
-// 参数: CLK_HZ — 系统时钟; MADCTL_PARAM — 显示方向寄存器值
-// ============================================================
 module st7735_init #(
     parameter integer CLK_HZ = 100000000,
-    parameter [7:0]   MADCTL_PARAM = 8'h00
+    parameter [7:0]   MADCTL_PARAM = 8'h00,
+    parameter [15:0]  LCD_X_OFFSET = 16'd2,
+    parameter [15:0]  LCD_Y_OFFSET = 16'd1
 )(
     input  wire       clk,
     input  wire       rst_n,
@@ -23,22 +17,24 @@ module st7735_init #(
     output reg        init_done
 );
 
-    // 状态机状态
-    localparam [2:0] S_RESET_LOW  = 3'd0; // 硬件复位低电平保持
-    localparam [2:0] S_RESET_HIGH = 3'd1; // 复位释放等待
-    localparam [2:0] S_SEND       = 3'd2; // 发送一条 SPI 命令/数据
-    localparam [2:0] S_WAIT       = 3'd3; // 等待 SPI 发送完成
-    localparam [2:0] S_DELAY      = 3'd4; // 命令后延时
-    localparam [2:0] S_DONE       = 3'd5; // 初始化完成，锁定
+    localparam [2:0] S_RESET_LOW  = 3'd0;
+    localparam [2:0] S_RESET_HIGH = 3'd1;
+    localparam [2:0] S_SEND       = 3'd2;
+    localparam [2:0] S_WAIT       = 3'd3;
+    localparam [2:0] S_DELAY      = 3'd4;
+    localparam [2:0] S_DONE       = 3'd5;
 
-    localparam [4:0] LAST_INDEX = 5'd17;  // 初始化序列最后一条索引
+    localparam [4:0] LAST_INDEX = 5'd17;
+    localparam [15:0] COL_START = LCD_X_OFFSET;
+    localparam [15:0] COL_END   = LCD_X_OFFSET + 16'd127;
+    localparam [15:0] ROW_START = LCD_Y_OFFSET;
+    localparam [15:0] ROW_END   = LCD_Y_OFFSET + 16'd127;
 
     reg [2:0]  state;
     reg [4:0]  seq_idx;
     reg [31:0] delay_cnt;
     reg [31:0] delay_target;
 
-    // 毫秒转时钟周期数
     function integer ms_to_cycles;
         input integer ms;
         integer tmp;
@@ -51,55 +47,52 @@ module st7735_init #(
         end
     endfunction
 
-    // 初始化命令序列：SWRESET -> SLPOUT -> COLMOD(RGB565) -> MADCTL -> CASET -> RASET -> NORON -> DISPON
     function [7:0] seq_data;
         input [4:0] idx;
         begin
             case (idx)
-                5'd0:  seq_data = 8'h01; // SWRESET — 软件复位
-                5'd1:  seq_data = 8'h11; // SLPOUT  — 退出睡眠
-                5'd2:  seq_data = 8'h3A; // COLMOD  — 设置颜色格式
+                5'd0:  seq_data = 8'h01; // SWRESET
+                5'd1:  seq_data = 8'h11; // SLPOUT
+                5'd2:  seq_data = 8'h3A; // COLMOD
                 5'd3:  seq_data = 8'h05; // RGB565
-                5'd4:  seq_data = 8'h36; // MADCTL  — 显示方向
+                5'd4:  seq_data = 8'h36; // MADCTL
                 5'd5:  seq_data = MADCTL_PARAM;
-                5'd6:  seq_data = 8'h2A; // CASET   — 列地址范围 0~127
-                5'd7:  seq_data = 8'h00;
-                5'd8:  seq_data = 8'h00;
-                5'd9:  seq_data = 8'h00;
-                5'd10: seq_data = 8'h7F;
-                5'd11: seq_data = 8'h2B; // RASET   — 行地址范围 0~127
-                5'd12: seq_data = 8'h00;
-                5'd13: seq_data = 8'h00;
-                5'd14: seq_data = 8'h00;
-                5'd15: seq_data = 8'h7F;
-                5'd16: seq_data = 8'h13; // NORON   — 正常显示模式
-                5'd17: seq_data = 8'h29; // DISPON  — 开启显示
+                5'd6:  seq_data = 8'h2A; // CASET
+                5'd7:  seq_data = COL_START[15:8];
+                5'd8:  seq_data = COL_START[7:0];
+                5'd9:  seq_data = COL_END[15:8];
+                5'd10: seq_data = COL_END[7:0];
+                5'd11: seq_data = 8'h2B; // RASET
+                5'd12: seq_data = ROW_START[15:8];
+                5'd13: seq_data = ROW_START[7:0];
+                5'd14: seq_data = ROW_END[15:8];
+                5'd15: seq_data = ROW_END[7:0];
+                5'd16: seq_data = 8'h13; // NORON
+                5'd17: seq_data = 8'h29; // DISPON
                 default: seq_data = 8'h00;
             endcase
         end
     endfunction
 
-    // DC=0 表示命令字节，DC=1 表示参数/数据字节
     function seq_dc;
         input [4:0] idx;
         begin
             case (idx)
                 5'd0, 5'd1, 5'd2, 5'd4, 5'd6, 5'd11, 5'd16, 5'd17:
-                    seq_dc = 1'b0; // 命令
+                    seq_dc = 1'b0;
                 default:
-                    seq_dc = 1'b1; // 参数
+                    seq_dc = 1'b1;
             endcase
         end
     endfunction
 
-    // 部分命令发送后需要等待（单位：时钟周期）
     function [31:0] delay_after;
         input [4:0] idx;
         begin
             case (idx)
-                5'd0:  delay_after = ms_to_cycles(150); // SWRESET 后等 150ms
-                5'd1:  delay_after = ms_to_cycles(120); // SLPOUT 后等 120ms
-                5'd17: delay_after = ms_to_cycles(20);  // DISPON 后等 20ms
+                5'd0:  delay_after = ms_to_cycles(150);
+                5'd1:  delay_after = ms_to_cycles(120);
+                5'd17: delay_after = ms_to_cycles(20);
                 default: delay_after = 32'd0;
             endcase
         end
@@ -110,7 +103,7 @@ module st7735_init #(
             state        <= S_RESET_LOW;
             seq_idx      <= 5'd0;
             delay_cnt    <= 32'd0;
-            delay_target <= ms_to_cycles(20); // 复位低电平保持 20ms
+            delay_target <= ms_to_cycles(20);
             spi_start    <= 1'b0;
             spi_dc       <= 1'b0;
             spi_data     <= 8'd0;
@@ -120,7 +113,6 @@ module st7735_init #(
             spi_start <= 1'b0;
 
             case (state)
-                // 硬件复位：拉低 lcd_rst_n 保持 20ms
                 S_RESET_LOW: begin
                     lcd_rst_n <= 1'b0;
                     if (delay_cnt >= delay_target) begin
@@ -132,7 +124,6 @@ module st7735_init #(
                     end
                 end
 
-                // 释放复位，等待 120ms 后开始发送命令
                 S_RESET_HIGH: begin
                     lcd_rst_n <= 1'b1;
                     if (delay_cnt >= delay_target) begin
@@ -144,7 +135,6 @@ module st7735_init #(
                     end
                 end
 
-                // 等待 SPI 空闲后发送当前序列字节
                 S_SEND: begin
                     if (!spi_busy) begin
                         spi_data  <= seq_data(seq_idx);
@@ -154,7 +144,6 @@ module st7735_init #(
                     end
                 end
 
-                // 等待 SPI 完成，决定是否需要延时或继续下一条
                 S_WAIT: begin
                     if (spi_done) begin
                         if (delay_after(seq_idx) != 32'd0) begin
@@ -170,7 +159,6 @@ module st7735_init #(
                     end
                 end
 
-                // 命令后延时等待
                 S_DELAY: begin
                     if (delay_cnt >= delay_target) begin
                         delay_cnt <= 32'd0;
@@ -185,7 +173,6 @@ module st7735_init #(
                     end
                 end
 
-                // 初始化完成，拉高 init_done 并锁定
                 S_DONE: begin
                     init_done <= 1'b1;
                     state     <= S_DONE;
