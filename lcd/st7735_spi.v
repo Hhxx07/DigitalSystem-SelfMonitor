@@ -28,6 +28,9 @@ module st7735_spi #(
     reg [2:0] bit_cnt;
     reg [15:0] div_cnt;
 
+    // SPI Mode 0 发送状态机。
+    // 空闲时片选拉高；start 后锁存 D/C 和数据并拉低片选；
+    // SCL 上升沿供 LCD 采样，下降沿准备下一位，8 位发完后产生 done。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             busy      <= 1'b0;

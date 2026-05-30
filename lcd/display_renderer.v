@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// ST7735 画面渲染器。
+// 以固定帧率刷新 128x128 画面：先设置 LCD 写入窗口，再逐像素发送 RGB565 数据；
+// 文本来自 font_rom，底部绘制 HP 进度条，报警时整屏闪烁提示。
 module display_renderer #(
     parameter integer CLK_HZ   = 100000000,
     parameter integer FRAME_HZ = 2,
@@ -34,6 +37,7 @@ module display_renderer #(
     output reg  [7:0]  spi_data
 );
 
+    // 渲染状态机：空闲等待帧周期、发送窗口命令、发送像素高/低字节。
     localparam [2:0] R_IDLE     = 3'd0;
     localparam [2:0] R_SEQ_SEND = 3'd1;
     localparam [2:0] R_SEQ_WAIT = 3'd2;
@@ -48,6 +52,8 @@ module display_renderer #(
     localparam [15:0] C_GRAY     = 16'h4208;
     localparam [15:0] C_DARK_RED = 16'h6000;
 
+    // 帧周期与 LCD 有效写入窗口。
+    // 偏移参数用于适配不同 ST7735 屏幕模组的显存坐标偏差。
     localparam [31:0] FRAME_PERIOD = (CLK_HZ / FRAME_HZ);
     localparam [15:0] COL_START = LCD_X_OFFSET;
     localparam [15:0] COL_END   = LCD_X_OFFSET + 16'd127;
@@ -62,6 +68,8 @@ module display_renderer #(
     reg [31:0] frame_cnt;
     reg [15:0] pixel_rgb;
 
+    // 当前像素映射到 8x8 字符网格。
+    // 高 4 位决定字符列/行，低 3 位决定字符内部点阵位置。
     wire [3:0] cell_col = pix_x[6:3];
     wire [3:0] cell_row = pix_y[6:3];
     wire [2:0] font_row = pix_y[2:0];
@@ -73,6 +81,7 @@ module display_renderer #(
     wire       display_distance;
     wire [15:0] hp_bar_width;
 
+    // 将日期、时间、计时、距离和 HP 数值拆成十进制数字，供 char_at 生成字符。
     wire [3:0] year_th = (year / 16'd1000) % 16'd10;
     wire [3:0] year_h  = (year / 16'd100)  % 16'd10;
     wire [3:0] year_t  = (year / 16'd10)   % 16'd10;
@@ -122,11 +131,13 @@ module display_renderer #(
     wire [3:0] hp_t    = (hp / 8'd10) % 8'd10;
     wire [3:0] hp_o    = hp % 8'd10;
 
+    // 显示控制信号：报警闪烁、无人时隐藏距离、按 HP 百分比计算进度条宽度。
     assign blink_on     = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
     assign display_distance = seated;
     assign hp_bar_width = (hp * 16'd110) / 16'd100;
     assign text_on      = font_bits[3'd7 - font_col];
 
+    // 字库 ROM 根据当前字符和字符内行号返回点阵位图。
     font_rom u_font_rom (
         .ascii(char_code),
         .row(font_row),
@@ -135,6 +146,7 @@ module display_renderer #(
 
     assign char_code = char_at(cell_col, cell_row);
 
+    // 单个十进制数字转 ASCII 字符。
     function [7:0] ascii_digit;
         input [3:0] digit;
         begin
@@ -142,6 +154,7 @@ module display_renderer #(
         end
     endfunction
 
+    // 座椅状态编码转英文显示文本。
     function [7:0] state_char;
         input [2:0] st;
         input [3:0] pos;
@@ -171,6 +184,7 @@ module display_renderer #(
         end
     endfunction
 
+    // 头部距离姿态等级转英文显示文本。
     function [7:0] posture_char;
         input [1:0] level;
         input [3:0] pos;
@@ -191,6 +205,7 @@ module display_renderer #(
         end
     endfunction
 
+    // 躯干姿态状态转英文显示文本。
     function [7:0] torso_char;
         input [1:0] st;
         input [3:0] pos;
@@ -214,6 +229,9 @@ module display_renderer #(
         end
     endfunction
 
+    // 屏幕字符布局表。
+    // 输入字符网格坐标，输出该位置应显示的 ASCII；
+    // 未使用位置返回空格，距离相关行在未入座时隐藏。
     function [7:0] char_at;
         input [3:0] col;
         input [3:0] row;
@@ -387,6 +405,8 @@ module display_renderer #(
         end
     endfunction
 
+    // LCD 写窗口命令序列数据。
+    // CASET/RASET 设置列行范围，RAMWR 进入像素写入模式。
     function [7:0] seq_data;
         input [3:0] idx;
         begin
@@ -407,6 +427,7 @@ module display_renderer #(
         end
     endfunction
 
+    // LCD 写窗口命令序列的 D/C 标志，命令为 0，参数为 1。
     function seq_dc;
         input [3:0] idx;
         begin
@@ -417,6 +438,8 @@ module display_renderer #(
         end
     endfunction
 
+    // 当前像素颜色生成。
+    // 优先处理报警闪烁，其次绘制 HP 条，再绘制白色文字，背景为黑色。
     always @(*) begin
         pixel_rgb = C_BLACK;
 
@@ -445,6 +468,9 @@ module display_renderer #(
         end
     end
 
+    // 渲染状态机。
+    // 每到一帧周期后发送窗口命令，然后按 pix_x/pix_y 扫描整屏；
+    // 每个 RGB565 像素分高字节和低字节两次通过 SPI 发送。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state      <= R_IDLE;

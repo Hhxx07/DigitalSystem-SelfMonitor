@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// pir_human_detector 的行为仿真测试平台。
+// 使用 SIM_FAST 缩短预热和稳定计数时间，覆盖预热屏蔽、稳定高/低电平更新、
+// 以及短暂毛刺被忽略等关键场景。
 module tb_pir_human_detector;
 
     reg clk;
@@ -13,6 +16,7 @@ module tb_pir_human_detector;
     integer errors;
     integer timeout_count;
 
+    // 待测模块例化，保持真实参数接口，但启用 SIM_FAST 加速测试。
     pir_human_detector #(
         .CLK_FREQ_HZ(100_000_000),
         .WARMUP_SEC(60),
@@ -27,11 +31,13 @@ module tb_pir_human_detector;
         .human_present(human_present)
     );
 
+    // 100 MHz 仿真时钟，周期 10 ns。
     initial begin
         clk = 1'b0;
         forever #5 clk = ~clk;
     end
 
+    // 单比特断言辅助任务：比较实际值与期望值，并累计错误数。
     task check_bit;
         input actual;
         input expected;
@@ -47,6 +53,7 @@ module tb_pir_human_detector;
         end
     endtask
 
+    // 在时钟下降沿改变 PIR 输入，避免与待测模块采样沿竞争。
     task set_pir;
         input value;
         begin
@@ -55,6 +62,7 @@ module tb_pir_human_detector;
         end
     endtask
 
+    // 等待指定数量的时钟周期，用于推动预热和稳定计数。
     task wait_cycles;
         input integer n;
         integer i;
@@ -64,6 +72,7 @@ module tb_pir_human_detector;
         end
     endtask
 
+    // 主测试流程：复位、预热阶段检查、有效阶段高低电平稳定检查和毛刺过滤检查。
     initial begin
         errors = 0;
         rst_n = 1'b0;

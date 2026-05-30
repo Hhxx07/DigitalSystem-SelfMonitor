@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// 躯干姿态分析模块。
+// 根据左/右 45 度超声波距离判断身体是否侧倾、扭转或前后偏移，
+// 并输出肩部距离差、姿态状态以及对健康值的扣分权重。
 module torso_posture_analyzer #(
     parameter integer CLK_HZ    = 100000000,
     parameter integer STABLE_MS = 500,
@@ -19,6 +22,7 @@ module torso_posture_analyzer #(
     output reg  [2:0] torso_hp_penalty
 );
 
+    // 姿态状态编码：正常、距离超出正常范围、单侧过近、左右差异过大。
     localparam [1:0] TORSO_OK    = 2'd0;
     localparam [1:0] TORSO_LEAN  = 2'd1;
     localparam [1:0] TORSO_SIDE  = 2'd2;
@@ -39,6 +43,9 @@ module torso_posture_analyzer #(
     wire       side_close_stable;
     wire       lean_stable;
 
+    // 组合判断当前采样是否异常。
+    // 左右差值用于识别扭转；单侧距离过近用于识别侧弯；
+    // 任一侧超出正常距离范围时视为轻度前后/侧向偏移。
     // front_distance_cm is dHead. Its SAFE/WARN/DANGER threshold is applied
     // in hp_engine, so this module only adds side-sensor torso penalties.
     assign diff_now = (left45_distance_cm >= right45_distance_cm) ?
@@ -65,6 +72,9 @@ module torso_posture_analyzer #(
     assign side_close_stable = (side_close_cnt >= STABLE_CYCLES);
     assign lean_stable       = (lean_cnt >= STABLE_CYCLES);
 
+    // 稳定性计数和姿态输出。
+    // 只有异常条件持续 STABLE_MS 后才改变状态，避免瞬间抖动导致误报；
+    // 优先级为单侧过近、左右差异过大、普通偏移。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             shoulder_diff_cm  <= 10'd0;

@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// PIR 红外人体存在检测模块。
+// 负责完成传感器上电预热、异步输入同步、稳定时间滤波，
+// 最终输出“检测结果是否可信”和“当前是否有人”的状态。
 module pir_human_detector #(
     parameter CLK_FREQ_HZ = 100_000_000,
     parameter WARMUP_SEC  = 60,
@@ -15,6 +18,8 @@ module pir_human_detector #(
     output reg  human_present
 );
 
+    // 计算计数器所需位宽。
+    // Verilog 兼容写法，避免依赖 SystemVerilog 的 $clog2。
     function integer clog2;
         input [63:0] value;
         reg [63:0] v;
@@ -44,6 +49,7 @@ module pir_human_detector #(
     localparam integer WARMUP_CNT_W = clog2(WARMUP_CYCLES);
     localparam integer STABLE_CNT_W = clog2(STABLE_CYCLES + 64'd1);
 
+    // pir_meta/pir_sync 构成两级同步器；后面的计数器分别用于预热期和输入稳定判定。
     reg pir_meta;
     reg pir_sync;
 
@@ -53,6 +59,7 @@ module pir_human_detector #(
 
     assign pir_raw_sync = pir_sync;
 
+    // 异步 PIR 输入同步到 clk 时钟域，降低亚稳态传播风险。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             pir_meta <= 1'b0;
@@ -63,6 +70,9 @@ module pir_human_detector #(
         end
     end
 
+    // 预热与稳定滤波主逻辑。
+    // 预热完成前强制 human_present 为 0；预热后只有输入电平持续 STABLE_MS
+    // 才更新 human_present，从而过滤红外模块的短脉冲抖动。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             warmup_cnt   <= {WARMUP_CNT_W{1'b0}};

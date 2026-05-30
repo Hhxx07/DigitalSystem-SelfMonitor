@@ -1,3 +1,6 @@
+// FSR402 四路压力数据串口上报模块。
+// 周期性锁存四个压力值，格式化为一行 ASCII 文本：
+// FL=dddd FR=dddd BL=dddd BR=dddd\r\n，并通过 uart_tx 发出。
 module uart_fsr402_streamer #(
     parameter integer CLK_FREQ_HZ = 100_000_000,
     parameter integer BAUD_RATE   = 115_200,
@@ -15,6 +18,7 @@ module uart_fsr402_streamer #(
     localparam integer REPORT_DIV = CLK_FREQ_HZ / REPORT_HZ;
     localparam integer LINE_LEN = 33;
 
+    // 上报流程状态：等待上报周期、发送当前字节、等待 UART 完成。
     localparam [1:0] S_IDLE = 2'd0;
     localparam [1:0] S_SEND = 2'd1;
     localparam [1:0] S_WAIT = 2'd2;
@@ -38,11 +42,14 @@ module uart_fsr402_streamer #(
     wire [31:0] bl_ascii;
     wire [31:0] br_ascii;
 
+    // 将锁存后的 12 位压力值转换成四位十进制 ASCII，便于串口终端直接查看。
     assign fl_ascii = dec4_ascii(fl_latch);
     assign fr_ascii = dec4_ascii(fr_latch);
     assign bl_ascii = dec4_ascii(bl_latch);
     assign br_ascii = dec4_ascii(br_latch);
 
+    // 12 位二进制数转四位十进制 ASCII。
+    // 通过比较减法得到千/百/十/个位，避免综合出较重的除法器。
     function [31:0] dec4_ascii;
         input [11:0] value;
         reg [11:0] rem0;
@@ -97,6 +104,8 @@ module uart_fsr402_streamer #(
         end
     endfunction
 
+    // 按 byte_index 返回当前上报行中应发送的字符。
+    // 固定字段名对应四个座椅压力位置，末尾添加 CRLF 作为一行结束。
     function [7:0] line_byte;
         input [5:0] index;
         begin
@@ -139,6 +148,7 @@ module uart_fsr402_streamer #(
         end
     endfunction
 
+    // 底层 UART 字节发送器，负责把 tx_data 按波特率串行输出。
     uart_tx #(
         .CLK_FREQ_HZ(CLK_FREQ_HZ),
         .BAUD_RATE(BAUD_RATE)
@@ -152,6 +162,8 @@ module uart_fsr402_streamer #(
         .done(tx_done)
     );
 
+    // 上报调度状态机。
+    // report_count 产生固定上报频率；进入发送前先锁存输入，保证一整行数据来自同一采样时刻。
     always @(posedge clk) begin
         if (reset) begin
             report_count <= 32'd0;

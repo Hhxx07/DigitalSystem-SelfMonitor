@@ -13,6 +13,9 @@ module font_rom(
     output reg  [7:0] bits
 );
 
+    // 字符点阵查表逻辑。
+    // display_renderer 提供 ASCII 和 0~6 的行号，本组合逻辑返回该字符该行的像素掩码；
+    // 每个 case 分支就是一个字符的 5x7 字形定义，未定义字符走默认占位图案。
     always @(*) begin
         case (ascii)
             8'h20: case (row) // space — 全空

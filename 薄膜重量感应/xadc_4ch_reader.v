@@ -1,3 +1,6 @@
+// 四通道 XADC 压力采样读取模块。
+// 连接 FPGA 内部 XADC 原语，轮询 VAUX0/2/3/8 四路薄膜压力传感器，
+// 对每一路做 16 次累加平均后输出 12 位压力值。
 module xadc_4ch_reader (
     input  wire       clk,
     input  wire       reset,
@@ -32,6 +35,7 @@ module xadc_4ch_reader (
 
     reg [4:0] read_channel;
 
+    // 各通道独立累加器和样本计数器，用于降低 ADC 抖动。
     reg [15:0] sum0;
     reg [15:0] sum2;
     reg [15:0] sum3;
@@ -42,11 +46,13 @@ module xadc_4ch_reader (
     reg [3:0] count8;
 
     wire [11:0] pressure_sample;
+    // XADC 原始码为电压正相关，这里反相成“压力越大数值越大”的表示。
     assign pressure_sample = 12'hfff - do_out[15:4];
 
     wire [15:0] vauxp;
     wire [15:0] vauxn;
 
+    // 将实际使用的四个外部模拟通道接入 XADC 的 16 位 VAUX 总线，其余通道固定为 0。
     assign vauxp[0]  = vauxp0;
     assign vauxn[0]  = vauxn0;
     assign vauxp[1]  = 1'b0;
@@ -80,6 +86,9 @@ module xadc_4ch_reader (
     assign vauxp[15] = 1'b0;
     assign vauxn[15] = 1'b0;
 
+    // XADC 数据接收与滑动分组平均。
+    // eoc 表示一次转换结束并给出当前通道号；drdy 表示 DO 数据有效。
+    // 每个目标通道收满 16 个样本后右移 4 位求平均，并产生 sample_update 脉冲。
     always @(posedge clk) begin
         if (reset) begin
             read_channel <= 5'd0;
@@ -160,6 +169,8 @@ module xadc_4ch_reader (
         end
     end
 
+    // Xilinx 7 系列 XADC 原语配置。
+    // 采用连续扫描模式，打开 VAUX0/2/3/8，读地址跟随当前转换通道。
     XADC #(
         .INIT_40(16'h0000),
         .INIT_41(16'h2000),

@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// health_lcd_top 集成测试平台。
+// 使用低 CLK_HZ、快速 SPI 和 sim_fast 缩短仿真时间，
+// 覆盖 LCD 初始化、HP 增减、久坐状态、离座休息和计时清零等系统行为。
 module tb_health_lcd_top;
 
     reg clk;
@@ -39,6 +42,8 @@ module tb_health_lcd_top;
     localparam [2:0] ST_REST           = 3'd4;
     localparam [2:0] ST_AWAY_LONG      = 3'd5;
 
+    // 待测顶层例化。
+    // 仿真中通过 force 固定超声波测距结果，避免等待真实 Echo 脉宽。
     health_lcd_top #(
         .CLK_HZ(1000),
         .SPI_CLK_DIV(1),
@@ -77,11 +82,14 @@ module tb_health_lcd_top;
         .lcd_blk(lcd_blk)
     );
 
+    // 100 MHz 测试时钟。
     initial begin
         clk = 1'b0;
         forever #5 clk = ~clk;
     end
 
+    // 等待指定数量的仿真“分钟”。
+    // sim_fast 下 seat_fsm/hp_engine 把每个 tick_1hz 当作一分钟处理。
     task wait_sim_minutes;
         input integer n;
         integer i;
@@ -93,6 +101,7 @@ module tb_health_lcd_top;
         end
     endtask
 
+    // 座椅状态断言辅助任务。
     task check_state;
         input [2:0] expected;
         input [511:0] name;
@@ -106,6 +115,7 @@ module tb_health_lcd_top;
         end
     endtask
 
+    // HP 数值断言辅助任务。
     task check_hp;
         input [7:0] expected;
         input [511:0] name;
@@ -119,6 +129,7 @@ module tb_health_lcd_top;
         end
     endtask
 
+    // 入座计时断言辅助任务。
     task check_sit_time;
         input [15:0] expected;
         input [511:0] name;
@@ -132,6 +143,9 @@ module tb_health_lcd_top;
         end
     endtask
 
+    // 主测试流程。
+    // 依次验证初始化完成、不同距离下 HP 变化、45/60 分钟久坐阈值、
+    // 离座 20/30 分钟状态、短休息保留计时和长休息清零。
     initial begin
         errors = 0;
         rst_n = 1'b0;

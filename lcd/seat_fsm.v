@@ -1,5 +1,8 @@
 `timescale 1ns / 1ps
 
+// 座椅使用状态机。
+// 根据 seated 信号和 1 Hz tick 统计连续入座、短暂离座休息和长时间离座，
+// 输出学习/久坐/过久/休息/长离开等状态以及对应计时。
 module seat_fsm (
     input  wire       clk,
     input  wire       rst_n,
@@ -13,6 +16,7 @@ module seat_fsm (
     output reg [5:0]  away_time_sec
 );
 
+    // 状态编码：空闲、正常学习、久坐提醒、严重久坐、休息中、长时间离开。
     localparam [2:0] ST_IDLE           = 3'd0;
     localparam [2:0] ST_STUDY          = 3'd1;
     localparam [2:0] ST_SEDENTARY      = 3'd2;
@@ -28,6 +32,9 @@ module seat_fsm (
     reg [5:0]  next_sit_sec;
     reg [5:0]  next_away_sec;
 
+    // 主状态机和计时器。
+    // seated 的边沿用于区分刚坐下/刚离开；tick_1hz 到来时推进分钟秒钟计数，
+    // sim_fast 下每个 tick 等效一分钟，方便仿真快速跨过 45/60/20/30 分钟阈值。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             state        <= ST_IDLE;
