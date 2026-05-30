@@ -3,8 +3,9 @@ set_property IOSTANDARD LVCMOS33 [get_ports clk100]
 create_clock -period 10.000 -name clk100 [get_ports clk100]
 
 # Board-to-board UART output on EGO1 J5-25 / IO_L15P.
+# J5 is in bank 15 with XADC pins, so use the bank-compatible 1.8V IO standard.
 set_property PACKAGE_PIN H14 [get_ports link_uart_tx]
-set_property IOSTANDARD LVCMOS33 [get_ports link_uart_tx]
+set_property IOSTANDARD LVCMOS18 [get_ports link_uart_tx]
 
 # Debug LEDs on EGO1 D0/D1.
 set_property PACKAGE_PIN F6 [get_ports led0]

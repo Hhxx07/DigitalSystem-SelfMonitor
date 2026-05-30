@@ -8,8 +8,9 @@ set_property PACKAGE_PIN P15 [get_ports rst_n]
 set_property IOSTANDARD LVCMOS33 [get_ports rst_n]
 
 # Board-to-board UART input on EGO1 J5-25 / IO_L15P.
+# Match the weighing board J5 bank-compatible 1.8V IO standard.
 set_property PACKAGE_PIN H14 [get_ports link_uart_rx]
-set_property IOSTANDARD LVCMOS33 [get_ports link_uart_rx]
+set_property IOSTANDARD LVCMOS18 [get_ports link_uart_rx]
 
 # Debug LEDs D0-D4.
 set_property PACKAGE_PIN F6 [get_ports led0]
