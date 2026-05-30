@@ -11,6 +11,7 @@
 ```text
 health_lcd_top.v
 ├── rtc_clock.v          产生 1 Hz tick，并维护年月日时分秒
+├── ../红外检测/pir_human_detector.v    PIR 红外检测，输出 ir_active 活动标志
 ├── seat_fsm.v           维护座位状态、学习时间和离座时间
 ├── ../超声波/top_Ranging.v              驱动单个超声波模块并输出距离
 ├── ../超声波/torso_posture_analyzer.v   根据左右 45 度斜距判断躯干状态
@@ -54,7 +55,7 @@ module health_lcd_top #(
     input  wire clk,
     input  wire rst_n,
     input  wire pressure_ok,
-    input  wire ir_ok,
+    input  wire pir_in,   // PIR 红外传感器原始信号
     input  wire ultrasonic_front_echo,
     input  wire ultrasonic_left45_echo,
     input  wire ultrasonic_right45_echo,
@@ -86,7 +87,7 @@ module health_lcd_top #(
 | `clk` | input | 1 | 系统主时钟。所有模块都在这个时钟下同步运行。上板使用 100 MHz 时，应把 `CLK_HZ` 参数设为 `100000000`。 |
 | `rst_n` | input | 1 | 全局低有效复位。为 0 时，RTC、座位状态机、HP、LCD 初始化流程和 SPI 发送器全部回到初始状态。 |
 | `pressure_ok` | input | 1 | 压力传感器判断结果。为 1 表示压力条件满足。 |
-| `ir_ok` | input | 1 | 红外传感器判断结果。为 1 表示红外条件满足。 |
+| `pir_in` | input | 1 | PIR 红外传感器原始信号。由内部 `pir_human_detector` 模块处理后产生 `ir_active` 时间窗口活动标志，用于入座判断。 |
 | `ultrasonic_front_echo` | input | 1 | 正前方超声波 Echo，用于测量头部/上身离桌距离 `dHead`。 |
 | `ultrasonic_left45_echo` | input | 1 | 左前方 45 度超声波 Echo，用于测量左胸前/左肩前斜距 `dL`。 |
 | `ultrasonic_right45_echo` | input | 1 | 右前方 45 度超声波 Echo，用于测量右胸前/右肩前斜距 `dR`。 |
@@ -109,13 +110,18 @@ module health_lcd_top #(
 | `lcd_mosi` | output | 1 | LCD SPI 数据线，MSB first，只写。 |
 | `lcd_blk` | output | 1 | LCD 背光控制。当前固定输出 1，默认背光高有效。 |
 
-顶层内部把压力和红外两个判断合成入座信号：
+顶层内部把 PIR 红外活动标志、超声波距离和压力三个条件合成入座信号：
 
 ```verilog
-assign seated = pressure_ok & ir_ok;
+assign seated = ir_active && ultrasonic_seated && pressure_ok;
 ```
 
-只有两个输入都为 1，系统才认为用户处于入座状态。`seated` 同时送到 `seat_fsm.v` 和 `hp_engine.v`。
+入座判断说明：
+- **ir_active**：PIR 红外时间窗口活动标志（3 分钟内人体运动触发则为 1，无触发则为 0 并否决入座）
+- **ultrasonic_seated**：三路超声波距离均低于 `ULTRASONIC_SEATED_THRESHOLD_CM`（默认 120 cm）
+- **pressure_ok**：压力传感器判断结果（接口不变）
+
+`seated` 同时送到 `seat_fsm.v` 和 `hp_engine.v`。
 
 距离由内部三路超声波测距子系统产生：
 
@@ -143,6 +149,8 @@ assign posture_distance_cm =
 | `MADCTL_PARAM` | `8'h00` | ST7735S 屏幕方向参数。方向不对时优先改这个值。 |
 | `LCD_X_OFFSET` | `16'd2` | LCD GRAM 列地址偏移。当前用于修正画面向左偏 2 个像素的问题。 |
 | `LCD_Y_OFFSET` | `16'd1` | LCD GRAM 行地址偏移。当前用于修正画面向上偏 1 个像素的问题。 |
+| `ULTRASONIC_SEATED_THRESHOLD_CM` | `12'd120` | 超声波入座判定阈值（厘米）。三路距离均低于此值时认为有人。 |
+| `PIR_WINDOW_CYCLES_FAST` | `200` | PIR 仿真快速模式下无触发窗口周期数。测试平台中可覆盖为更大值。 |
 
 ## LCD 画面偏移修正
 
@@ -676,7 +684,7 @@ blink_on = (hp_zero_alarm || (seat_state == 3'd3)) && second[0];
 
 ```powershell
 cd D:\UserDate\DeskTop\数字系统Project\src\lcd
-iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v ..\称重\weight_balance_analyzer.v
+iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\红外检测\pir_human_detector.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v ..\称重\weight_balance_analyzer.v
 vvp tb_health_lcd_top.vvp
 ```
 

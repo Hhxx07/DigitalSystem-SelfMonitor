@@ -10,6 +10,7 @@ FPGA-based healthy sitting posture monitoring system targeting EGO1 (Xilinx Arti
 
 ### Top-level
 `lcd/health_lcd_top.v` is the system top. It integrates:
+- `pir_human_detector.v` — PIR sensor processing with inactivity window (ir_active output)
 - `rtc_clock.v` — software RTC with 1 Hz tick
 - `seat_fsm.v` — seat state machine (IDLE/STUDY/SEDENTARY/OVER/REST/AWAY)
 - `hp_engine.v` — HP calculation (head distance + torso penalty)
@@ -23,7 +24,8 @@ FPGA-based healthy sitting posture monitoring system targeting EGO1 (Xilinx Arti
 
 ### Key Data Flow
 ```
-pressure_ok & ir_ok → seated → seat_fsm + hp_engine
+pir_in → pir_human_detector → ir_active
+ir_active + ultrasonic_seated (3x dist < threshold) + pressure_ok → seated → seat_fsm + hp_engine
 ultrasonic Echo/Trig → top_Ranging ×3 → distances → torso_posture_analyzer → hp_engine
 4-corner weight → weight_balance_analyzer → balance outputs
 seat_fsm + RTC + distances + hp → display_renderer → st7735_spi → LCD
@@ -42,7 +44,7 @@ seat_fsm + RTC + distances + hp → display_renderer → st7735_spi → LCD
 
 ### Subsystems
 - `超声波/` — `trig_generator.v` + `signal_sync.v` + `distance_calc.v` (5600 cycles ≈ 1cm at 100MHz)
-- `红外检测/` — `pir_human_detector.v` with warmup timer and stable debounce filter
+- `红外检测/` — `pir_human_detector.v` with warmup timer, stable debounce filter, and inactivity window counter → outputs `ir_active`
 - `薄膜重量感应/` — `xadc_4ch_reader.v` + `uart_fsr402_streamer.v` + `uart_tx.v` (115200 baud, 5Hz report)
 
 ## Simulation with Iverilog
@@ -50,7 +52,7 @@ seat_fsm + RTC + distances + hp → display_renderer → st7735_spi → LCD
 Run the main testbench:
 ```powershell
 cd lcd
-iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v ..\称重\weight_balance_analyzer.v
+iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\红外检测\pir_human_detector.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v ..\称重\weight_balance_analyzer.v
 vvp tb_health_lcd_top.vvp
 ```
 
@@ -67,7 +69,7 @@ Expected output: `ALL TESTS PASSED`
 
 - Target: EGO1 (Artix-7), 100 MHz clock
 - Set `lcd/health_lcd_top.v` as top module
-- Add all `.v` files from `lcd/`, `超声波/`, `薄膜重量感应/`
+- Add all `.v` files from `lcd/`, `超声波/`, `红外检测/`, `薄膜重量感应/`
 - Use `lcd/ego1_st7735_example.xdc` — edit PACKAGE_PIN for actual board wiring
 - `sim_fast` must be tied to 0 on board
 - `CLK_HZ` parameter must match actual clock (100000000 for EGO1)
@@ -87,7 +89,9 @@ Expected output: `ALL TESTS PASSED`
 ## Hardware Interface
 
 - Clock: 100 MHz, Reset: active-low (`rst_n`)
-- `seated = pressure_ok & ir_ok` (AND of both sensors)
+- `seated = ir_active && ultrasonic_seated && pressure_ok` (IR has veto: ir_active=0 → seated=0)
+- `ir_active` = PIR trigger count within 3-min window (rising edges of debounced human_present)
+- `ultrasonic_seated` = all 3 ultrasonic distances < ULTRASONIC_SEATED_THRESHOLD_CM (default 120cm)
 - LCD: 4-wire SPI (CS_n, RST_n, DC, SCL, MOSI, BLK)
 - Ultrasonic: standard Echo/Trig interface (watch for 5V Echo → level shift needed)
 - FSR402: XADC VAUX pins (p0/n0, p2/n2, p3/n3, p8/n8) + UART TX (115200)
