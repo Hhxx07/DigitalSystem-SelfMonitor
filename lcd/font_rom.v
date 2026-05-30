@@ -1,5 +1,12 @@
 `timescale 1ns / 1ps
 
+// ============================================================
+// 模块: font_rom
+// 功能: 5x7 点阵字体 ROM，支持数字 0-9、大写字母及常用符号
+// 输入: ascii[7:0] — ASCII 码; row[2:0] — 字符行索引 (0=顶行)
+// 输出: bits[7:0]  — 该行的像素位图，bit7 对应最左列
+// 说明: 不支持的字符输出带边框的占位方块
+// ============================================================
 module font_rom(
     input  wire [7:0] ascii,
     input  wire [2:0] row,
@@ -8,18 +15,19 @@ module font_rom(
 
     always @(*) begin
         case (ascii)
-            8'h20: case (row) // space
+            8'h20: case (row) // space — 全空
                 default: bits = 8'h00;
             endcase
-            8'h2D: case (row) // -
+            8'h2D: case (row) // '-'
                 3'd3: bits = 8'h7E;
                 default: bits = 8'h00;
             endcase
-            8'h3A: case (row) // :
+            8'h3A: case (row) // ':'
                 3'd2: bits = 8'h18;
                 3'd5: bits = 8'h18;
                 default: bits = 8'h00;
             endcase
+            // 数字 0-9
             8'h30: case (row) // 0
                 3'd0: bits = 8'h3C; 3'd1: bits = 8'h66; 3'd2: bits = 8'h6E; 3'd3: bits = 8'h76;
                 3'd4: bits = 8'h66; 3'd5: bits = 8'h66; 3'd6: bits = 8'h3C; default: bits = 8'h00;
@@ -60,6 +68,7 @@ module font_rom(
                 3'd0: bits = 8'h3C; 3'd1: bits = 8'h66; 3'd2: bits = 8'h66; 3'd3: bits = 8'h3E;
                 3'd4: bits = 8'h06; 3'd5: bits = 8'h0C; 3'd6: bits = 8'h38; default: bits = 8'h00;
             endcase
+            // 大写字母 A-Y（仅显示所需字符）
             8'h41: case (row) // A
                 3'd0: bits = 8'h18; 3'd1: bits = 8'h24; 3'd2: bits = 8'h42; 3'd3: bits = 8'h7E;
                 3'd4: bits = 8'h42; 3'd5: bits = 8'h42; 3'd6: bits = 8'h42; default: bits = 8'h00;
@@ -140,7 +149,8 @@ module font_rom(
                 3'd0: bits = 8'h42; 3'd1: bits = 8'h42; 3'd2: bits = 8'h24; 3'd3: bits = 8'h18;
                 3'd4: bits = 8'h18; 3'd5: bits = 8'h18; 3'd6: bits = 8'h18; default: bits = 8'h00;
             endcase
-            default: case (row) // unsupported character box
+            // 不支持的字符：输出带边框占位方块
+            default: case (row)
                 3'd0: bits = 8'h7E; 3'd1: bits = 8'h42; 3'd2: bits = 8'h5A; 3'd3: bits = 8'h42;
                 3'd4: bits = 8'h5A; 3'd5: bits = 8'h42; 3'd6: bits = 8'h7E; default: bits = 8'h00;
             endcase
