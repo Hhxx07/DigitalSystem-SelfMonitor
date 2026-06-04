@@ -133,7 +133,7 @@ module lcd_board_weight_lcd_top #(
         .clk(clk),
         .rst_n(rst_n),
         .pressure_ok(pressure_ok),
-        .ir_ok(ir_human_ok),
+        .ir_ok(ir_humans_ok),
         .ultrasonic_front_echo(ultrasonic_front_echo),
         .ultrasonic_left45_echo(ultrasonic_left45_echo),
         .ultrasonic_right45_echo(ultrasonic_right45_echo),
