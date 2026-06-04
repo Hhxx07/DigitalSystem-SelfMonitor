@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module xadc_4ch_reader (
     input  wire       clk,
     input  wire       reset,

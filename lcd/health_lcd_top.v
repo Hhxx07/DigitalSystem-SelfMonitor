@@ -27,7 +27,8 @@ module health_lcd_top #(
     parameter [15:0]  LCD_Y_OFFSET = 16'd1,
     parameter [11:0]  ULTRASONIC_SEATED_THRESHOLD_CM = 12'd120,
     parameter integer PIR_WINDOW_CYCLES_FAST = 200,
-    parameter integer PIR_INACTIVE_WINDOW_SEC = 180   // PIR 无触发窗口秒数（仿真中可覆盖）
+    parameter integer PIR_INACTIVE_WINDOW_SEC = 180,
+    parameter integer PIR_SIM_FAST = 0
 )(
     input  wire clk,
     input  wire rst_n,
@@ -131,7 +132,10 @@ module health_lcd_top #(
 
     // 超声波入座判定：正前方、左45度、右45度距离均低于阈值，认为座椅前方
     // 有物体（人在座）。阈值默认为 120 cm，可滤除“无回波”的超大读数。
-    assign ultrasonic_seated = (ultrasonic_front_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM})
+    assign ultrasonic_seated = (ultrasonic_front_distance_cm != 16'd0)
+                            && (ultrasonic_left45_distance_cm != 16'd0)
+                            && (ultrasonic_right45_distance_cm != 16'd0)
+                            && (ultrasonic_front_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM})
                             && (ultrasonic_left45_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM})
                             && (ultrasonic_right45_distance_cm < {4'd0, ULTRASONIC_SEATED_THRESHOLD_CM});
     assign posture_distance_cm = (ultrasonic_front_distance_cm > 16'd1023) ? 10'd1023 : ultrasonic_front_distance_cm[9:0];
@@ -173,7 +177,7 @@ module health_lcd_top #(
         .CLK_FREQ_HZ(CLK_HZ),
         .WARMUP_SEC(60),
         .STABLE_MS(100),
-        .SIM_FAST(0),
+        .SIM_FAST(PIR_SIM_FAST),
         .INACTIVE_WINDOW_SEC(PIR_INACTIVE_WINDOW_SEC),
         .INACTIVE_WINDOW_CYCLES_FAST(PIR_WINDOW_CYCLES_FAST)
     ) u_pir (
@@ -201,7 +205,10 @@ module health_lcd_top #(
     );
 
     // 三路超声波分别测量头部正前方、左 45 度和右 45 度距离。
-    top_Ranging u_ultrasonic_front (
+    top_Ranging #(
+        .CLK_FREQ_HZ(CLK_HZ),
+        .TRIG_START_DELAY_CYCLES(0)
+    ) u_ultrasonic_front (
         .clk(clk),
         .rst_n(rst_n),
         .ultrasonic_echo(ultrasonic_front_echo),
@@ -209,7 +216,10 @@ module health_lcd_top #(
         .distance_cm(ultrasonic_front_distance_cm)
     );
 
-    top_Ranging u_ultrasonic_left45 (
+    top_Ranging #(
+        .CLK_FREQ_HZ(CLK_HZ),
+        .TRIG_START_DELAY_CYCLES((CLK_HZ / 1000) * 22)
+    ) u_ultrasonic_left45 (
         .clk(clk),
         .rst_n(rst_n),
         .ultrasonic_echo(ultrasonic_left45_echo),
@@ -217,7 +227,10 @@ module health_lcd_top #(
         .distance_cm(ultrasonic_left45_distance_cm)
     );
 
-    top_Ranging u_ultrasonic_right45 (
+    top_Ranging #(
+        .CLK_FREQ_HZ(CLK_HZ),
+        .TRIG_START_DELAY_CYCLES((CLK_HZ / 1000) * 44)
+    ) u_ultrasonic_right45 (
         .clk(clk),
         .rst_n(rst_n),
         .ultrasonic_echo(ultrasonic_right45_echo),

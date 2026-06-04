@@ -79,9 +79,8 @@ module pir_human_detector #(
     reg [STABLE_CNT_W-1:0] stable_cnt;
     reg stable_level;
 
-    // 无触发窗口计数器，以及 human_present 上一拍值（用于上升沿检测）。
+    // 无触发窗口计数器。
     reg [WINDOW_CNT_W-1:0] window_cnt;
-    reg prev_human_present;
 
     assign pir_raw_sync = pir_sync;
 
@@ -140,38 +139,31 @@ module pir_human_detector #(
 
     // 无触发窗口与 ir_active 逻辑。
     // 目的：PIR 是运动传感器（检测红外变化），不能仅靠单次 human_present
-    // 值判断是否有人。此处统计 human_present 的上升沿（即人体运动触发事件）。
-    // 如果在 INACTIVE_WINDOW_SEC 秒的时间窗口内至少发生一次触发：
+    // 值判断是否有人。去抖后的 PIR 高电平会持续刷新活动窗口。
+    // 如果在 INACTIVE_WINDOW_SEC 秒的时间窗口内发生过触发：
     //   ir_active = 1（判断有人活动）。
     // 如果窗口内没有任何触发事件：
     //   ir_active = 0（判定无人，具备否决入座的权力）。
     //
     // 预热完成前 ir_active 强制为 0，窗口计数器不推进。
-    // 预热完成后，每次 human_present 上升沿将窗口计数器清零并置 ir_active=1。
-    // 计数器累加到 WINDOW_CYCLES 时，ir_active 清零（窗口到期，无人活动）。
+    // 预热完成后，human_present 高电平期间将窗口计数器清零并置 ir_active=1。
+    // 高电平结束后计数器开始累计，到期后清零 ir_active。
     always @(posedge clk or negedge rst_n) begin
         if (!rst_n) begin
             ir_active          <= 1'b0;
             window_cnt         <= {WINDOW_CNT_W{1'b0}};
-            prev_human_present <= 1'b0;
         end else begin
-            prev_human_present <= human_present;
-
             if (!pir_valid) begin
                 // 预热期间，窗口计数器保持清零，ir_active 保持 0
                 ir_active  <= 1'b0;
                 window_cnt <= {WINDOW_CNT_W{1'b0}};
             end else begin
-                // 检测 human_present 上升沿（表示一次人体运动触发事件）
-                if (human_present && !prev_human_present) begin
-                    // 检测到触发 — 重置窗口，ir_active 置 1
+                if (human_present) begin
                     window_cnt <= {WINDOW_CNT_W{1'b0}};
                     ir_active  <= 1'b1;
-                end else if (window_cnt < WINDOW_CYCLES) begin
-                    // 窗口尚未到期，继续计数
+                end else if (window_cnt < WINDOW_CYCLES - 64'd1) begin
                     window_cnt <= window_cnt + 1'b1;
                 end else begin
-                    // 窗口到期 — 无新的触发事件，判定无人
                     ir_active <= 1'b0;
                 end
             end

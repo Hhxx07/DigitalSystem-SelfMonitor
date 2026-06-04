@@ -1,120 +1,125 @@
-﻿# 数字系统健康坐姿项目总览
+# 健康坐姿监测 FPGA 项目
 
-这是项目总文档的大纲版，用于说明各子系统位置和集成关系。更详细的模块说明见各子目录 README。
+本仓库面向 Xilinx Artix-7 / EGO1，使用 Verilog-2001 实现健康坐姿监测系统。系统综合使用三路超声波、PIR 红外、四路 FSR402 薄膜压力传感器和 ST7735S 128x128 LCD。
+
+## 当前推荐架构
+
+实际硬件建议使用两块 EGO1：
+
+```text
+称重板
+  FSR402 x4 -> XADC -> 重量/重心分析 -> 二进制 UART
+                                      |
+                                      v
+LCD 状态板
+  UART 接收 + PIR + 超声波 x3 -> 健康状态机/HP -> ST7735S LCD
+```
+
+推荐顶层：
+
+| 用途 | 顶层模块 |
+|---|---|
+| 称重板 | `two_board_weight_link/weight_board/src/weight_board_link_top.v` |
+| LCD 状态板 | `two_board_weight_link/lcd_board/src/lcd_board_weight_lcd_top.v` |
+| 不使用双板包装、直接集成 | `lcd/health_lcd_top.v` |
+| 仅测试板间 UART 接收 | `two_board_weight_link/lcd_board/src/lcd_board_link_rx_top.v` |
 
 ## 目录结构
 
 ```text
 src/
-├── lcd/        ST7735S LCD 显示、RTC、座位状态机、HP 引擎、系统顶层
-├── 超声波/    三路超声波测距，提供正前头部离桌距离和左右 45 度斜距
-├── 红外检测/  红外人体检测相关模块
-└── 称重/      压力/称重检测相关模块
+├── lcd/                    LCD、RTC、座位状态机、HP 和直接集成顶层
+├── 超声波/                三路测距和躯干状态分析
+├── 红外检测/              PIR 同步、滤波和活动保持
+├── 薄膜重量感应/          单板 XADC + ASCII 串口调试方案
+├── 称重/                  简单四角重量差值分析器
+└── two_board_weight_link/  推荐的双 EGO1 二进制 UART 称重链路
 ```
 
-## 系统顶层
-
-当前主顶层是：
+## 核心数据流
 
 ```text
-lcd/health_lcd_top.v
-```
+PIR 原始信号
+  -> pir_human_detector
+  -> ir_active
 
-它负责集成：
-
-- LCD 初始化和刷新显示
-- RTC 日期时间
-- 座位状态机 `IDLE/STUDY/SEDENTARY/OVER/REST/AWAY`
-- HP 计算与报警
-- 三路超声波测距、头部离桌判断与躯干状态判断
-- 四角称重重心分布接口
-- 压力和红外入座判断
-
-## 主要硬件接口
-
-系统外设接口大致包括：
-
-- 100 MHz 系统时钟 `clk`
-- 低有效复位 `rst_n`
-- 压力检测输入 `pressure_ok`
-- 红外检测输入 `pir_in`（PIR 原始信号，由内部模块处理为 ir_active 活动标志）
-- 正前方头部距离超声波 `ultrasonic_front_echo/trig`
-- 左前 45 度超声波 `ultrasonic_left45_echo/trig`
-- 右前 45 度超声波 `ultrasonic_right45_echo/trig`
-- 四角称重数值输入：左前、左后、右前、右后
-- 重心分布输出：前后差值/等级、左右差值/等级
-- LCD SPI 接口：`lcd_cs_n/lcd_rst_n/lcd_dc/lcd_scl/lcd_mosi/lcd_blk`
-
-## 数据流大纲
-
-```text
-压力 + 红外（pir_in → pir_human_detector → ir_active） + 超声波距离
-  -> seated = ir_active && ultrasonic_seated && pressure_ok
-  -> seat_fsm 生成座位状态和学习/离座计时
-
-三路超声波 Echo/Trig
+三路超声波
   -> top_Ranging x3
-  -> 正前 dHead + 左右 45 度 dL/dR 斜距
-  -> posture_level + torso_posture_analyzer
-  -> hp_engine 和 LCD 距离/躯干显示
+  -> dHead / dL / dR
+  -> ultrasonic_seated + torso_posture_analyzer
 
-四角称重
-  -> weight_balance_analyzer
-  -> 前后重心差值/等级 + 左右重心差值/等级
+称重板 UART 数据
+  -> pressure_ok + 四角重量 + 重心状态/方向
 
-seat_fsm + distance_cm + torso_state
-  -> hp_engine
-  -> HP、姿势状态、躯干扣分、报警
-
-RTC + seat_fsm + hp_engine + distance_cm + torso_state
-  -> display_renderer
-  -> st7735_spi
-  -> LCD 屏幕
+ir_active && ultrasonic_seated && pressure_ok
+  -> seated
+  -> seat_fsm + hp_engine + display_renderer
+  -> ST7735S LCD
 ```
 
-## 当前 LCD 显示内容
+超声波零距离表示尚未获得有效回波，不参与入座判定。三路 Trig 在一个 65 ms 周期内分别延迟约 0、22、44 ms，减少同时触发造成的串扰。
 
-LCD 显示：
+## 状态和 HP
 
-- 日期 `YYYY-MM-DD`
-- 时间 `HH:MM:SS`
-- 座位状态 `STAT ...`
-- 姿势状态 `POST ...`
-- 学习计时 `SIT mmmm:ss`
-- 离座计时 `AWAY mmmm:ss`
-- 当前计时 `NOW mmmm:ss`
-- 左右 45 度斜距差 `TDIF xxxxCM`
-- 躯干状态 `TORS GOOD/LEAN/SIDE/TWIST`
-- 头部离桌距离 `HEAD xxxxCM`，仅入座时显示
-- HP 数值和底部血条
-
-## 状态与策略摘要
-
-- `seated = ir_active && ultrasonic_seated && pressure_ok`（红外有否决权：ir_active=0 直接判无人）
-- 入座后进入 `STUDY`
-- 坐满 45 分钟进入久坐
-- 坐满 60 分钟进入过度久坐
-- 离座进入休息状态
-- 离座超过 20 分钟进入长时间离开
-- 离座超过 30 分钟进入 `IDLE`
-- 进入 `IDLE` 后 HP 恢复为 100，下一次学习从满 HP 开始
-- 正前 `dHead` 按 `>=26cm / 20..25cm / <20cm` 影响 `POST SAFE/WARN/DANGER`
-- 左右 45 度 `dL/dR` 按 24..30cm 正常范围、5cm 差值和 19cm 单侧过近阈值判断 `GOOD/LEAN/SIDE/TWIST`
-- 躯干微倾、侧弯、扭转会按等级额外扣 HP
-
-## 子文档
-
-- `lcd/README.md`：LCD 顶层、显示渲染、状态机、HP、仿真说明
-- `超声波/README.md`：三路超声波硬件接口、测距流程、躯干状态判断
-- `称重/README.md`：四角称重预留接口、前后/左右重心分布输出
-
-## 仿真入口
-
-主要回归 testbench：
+座位状态：
 
 ```text
-lcd/tb_health_lcd_top.v
+IDLE -> STUDY -> SEDENTARY(45min) -> OVER_SEDENTARY(60min)
+          |
+          +-> REST -> AWAY_LONG(20min) -> IDLE(30min)
 ```
 
-在 `lcd/` 目录下运行 README 中的 `iverilog` 命令即可验证 LCD 顶层与超声波测距模块的集成。
+- 离座超过 3 分钟后返回，重新开始学习计时。
+- 离座 3 分钟内返回，保留原学习计时。
+- 进入 `IDLE` 后 HP 恢复为 100。
 
+头部离桌距离 `dHead`：
+
+| 距离 | 状态 | HP 基础变化 |
+|---|---|---:|
+| `>= 26cm` | SAFE | `+1/min` |
+| `20..25cm` | WARN | `-1/min` |
+| `< 20cm` | DANGER | `-3/min` |
+
+左右斜距 `dL/dR` 还会产生 `LEAN/SIDE/TWIST` 额外扣分，详见 `超声波/README.md`。
+
+## LCD 显示
+
+当前画面包括：
+
+- 日期和时间
+- 座位状态、头部姿势状态
+- 学习、离座和当前状态计时
+- 左右、前后重心方向及等级
+- 左右斜距差、躯干状态、头部距离
+- HP 数值和血条
+- HP 为 0 或过度久坐时全屏闪烁
+
+## 文档索引
+
+- `lcd/README.md`：直接集成顶层、LCD 渲染、状态机和仿真。
+- `超声波/README.md`：三路超声波安装、错峰触发和姿态阈值。
+- `红外检测/README.md`：PIR 预热、滤波和活动窗口。
+- `薄膜重量感应/README.md`：单板 XADC 与 ASCII UART 调试方案。
+- `称重/README.md`：简单重量差值分析模块。
+- `two_board_weight_link/README.md`：推荐双板方案、数据包和工程文件清单。
+
+## 回归验证
+
+主系统：
+
+```powershell
+cd lcd
+iverilog -g2001 -Wall -o tb_health_lcd_top.vvp tb_health_lcd_top.v health_lcd_top.v st7735_spi.v st7735_init.v display_renderer.v font_rom.v rtc_clock.v seat_fsm.v hp_engine.v ..\红外检测\pir_human_detector.v ..\超声波\top_Ranging.v ..\超声波\trig_generator.v ..\超声波\signal_sync.v ..\超声波\distance_calc.v ..\超声波\torso_posture_analyzer.v
+vvp tb_health_lcd_top.vvp
+```
+
+PIR：
+
+```powershell
+cd 红外检测
+iverilog -g2001 -Wall -o tb_pir_human_detector.vvp tb_pir_human_detector.v pir_human_detector.v
+vvp tb_pir_human_detector.vvp
+```
+
+XADC 模块使用 Xilinx `XADC` 原语，Icarus Verilog 编译时需要 Vivado 仿真库或使用 `-i` 忽略未解析原语；最终上板综合应使用 Vivado。

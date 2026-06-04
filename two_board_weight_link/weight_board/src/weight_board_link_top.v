@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module weight_board_link_top #(
     parameter integer CLK_FREQ_HZ    = 100_000_000,
     parameter integer BAUD_RATE      = 115_200,
@@ -66,10 +68,15 @@ module weight_board_link_top #(
     end
 
     always @(posedge clk100) begin
-        led_count <= led_count + 27'd1;
-        if (led_count == 27'd99_999_999) begin
+        if (reset) begin
             led_count <= 27'd0;
-            led0 <= ~led0;
+            led0 <= 1'b0;
+        end else begin
+            led_count <= led_count + 27'd1;
+            if (led_count == 27'd99_999_999) begin
+                led_count <= 27'd0;
+                led0 <= ~led0;
+            end
         end
     end
 

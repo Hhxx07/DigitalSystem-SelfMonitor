@@ -5,11 +5,11 @@
 create_clock -period 10.000 -name clk100 [get_ports clk]
 
 ## 基础数字输入信号电平标准。
-## rst_n、pressure_ok、ir_ok 和 sim_fast 都按 3.3 V LVCMOS 连接。
+## rst_n、pressure_ok、pir_in 和 sim_fast 都按 3.3 V LVCMOS 连接。
 set_property IOSTANDARD LVCMOS33 [get_ports clk]
 set_property IOSTANDARD LVCMOS33 [get_ports rst_n]
 set_property IOSTANDARD LVCMOS33 [get_ports pressure_ok]
-set_property IOSTANDARD LVCMOS33 [get_ports ir_ok]
+set_property IOSTANDARD LVCMOS33 [get_ports pir_in]
 set_property IOSTANDARD LVCMOS33 [get_ports sim_fast]
 
 ## 三路超声波模块的 Echo 输入和 Trig 输出电平标准。
@@ -29,6 +29,12 @@ set_property IOSTANDARD LVCMOS33 [get_ports {weight_front_back_diff[*]}]
 set_property IOSTANDARD LVCMOS33 [get_ports {weight_left_right_diff[*]}]
 set_property IOSTANDARD LVCMOS33 [get_ports {weight_front_back_balance[*]}]
 set_property IOSTANDARD LVCMOS33 [get_ports {weight_left_right_balance[*]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {weight_left_right_state[*]}]
+set_property IOSTANDARD LVCMOS33 [get_ports {weight_front_back_state[*]}]
+set_property IOSTANDARD LVCMOS33 [get_ports lean_left]
+set_property IOSTANDARD LVCMOS33 [get_ports lean_right]
+set_property IOSTANDARD LVCMOS33 [get_ports lean_front]
+set_property IOSTANDARD LVCMOS33 [get_ports lean_back]
 
 ## ST7735 LCD SPI/控制引脚的电平标准。
 set_property IOSTANDARD LVCMOS33 [get_ports lcd_cs_n]
@@ -44,7 +50,7 @@ set_property IOSTANDARD LVCMOS33 [get_ports lcd_blk]
 ## set_property PACKAGE_PIN <PIN_CLK> [get_ports clk]
 ## set_property PACKAGE_PIN <PIN_RST> [get_ports rst_n]
 ## set_property PACKAGE_PIN <PIN_PRESSURE> [get_ports pressure_ok]
-## set_property PACKAGE_PIN <PIN_IR> [get_ports ir_ok]
+## set_property PACKAGE_PIN <PIN_PIR> [get_ports pir_in]
 ## set_property PACKAGE_PIN <PIN_SIM_FAST> [get_ports sim_fast]
 ## set_property PACKAGE_PIN <PIN_US_FRONT_ECHO> [get_ports ultrasonic_front_echo]
 ## set_property PACKAGE_PIN <PIN_US_FRONT_TRIG> [get_ports ultrasonic_front_trig]

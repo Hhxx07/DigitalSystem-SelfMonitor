@@ -43,7 +43,7 @@ module tb_pir_human_detector;
     task check_bit;
         input actual;
         input expected;
-        input [255:0] name;
+        input [511:0] name;
         begin
             if (actual !== expected) begin
                 $display("FAIL %0s: expected %0b got %0b at %0t",
@@ -141,7 +141,13 @@ module tb_pir_human_detector;
         wait_cycles(10);
         check_bit(ir_active, 1'b1, "ir_active=1 after expiry re-trigger");
 
-        // 3. 再次等待窗口超时，ir_active 应变为 0
+        // 3. PIR 保持高电平时活动窗口应持续刷新。
+        wait_cycles(210);
+        check_bit(ir_active, 1'b1, "ir_active stays high during PIR high level");
+
+        // 4. PIR 回到低电平后，再等待窗口超时。
+        set_pir(1'b0);
+        wait_cycles(10);
         wait_cycles(210);
         check_bit(ir_active, 1'b0, "ir_active=0 after second window expiry");
 

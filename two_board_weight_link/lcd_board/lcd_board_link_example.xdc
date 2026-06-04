@@ -13,8 +13,8 @@ set_property IOSTANDARD LVCMOS18 [get_ports link_uart_rx]
 
 # PIR input on EGO1 J5-27 / IO_L16P. If the PIR module outputs 3.3V,
 # level-shift or divide it before connecting to this 1.8V IO pin.
-set_property PACKAGE_PIN E17 [get_ports ir_ok]
-set_property IOSTANDARD LVCMOS18 [get_ports ir_ok]
+set_property PACKAGE_PIN E17 [get_ports pir_in]
+set_property IOSTANDARD LVCMOS18 [get_ports pir_in]
 
 # Debug LEDs D1-D4.
 set_property PACKAGE_PIN G4 [get_ports link_alive]

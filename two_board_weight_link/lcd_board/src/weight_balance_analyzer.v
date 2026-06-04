@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module weight_balance_analyzer #(
     parameter [7:0] WARN_PERCENT   = 8'd15,
     parameter [7:0] DANGER_PERCENT = 8'd30

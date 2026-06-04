@@ -58,7 +58,8 @@ module tb_health_lcd_top;
         .INIT_MIN(0),
         .INIT_SEC(0),
         .PIR_INACTIVE_WINDOW_SEC(5),  // 仿真窗口 5 秒，方便 IR 否决测试
-        .PIR_WINDOW_CYCLES_FAST(50000)  // 大窗口确保跨多个sim_minutes
+        .PIR_WINDOW_CYCLES_FAST(50000),  // 大窗口确保跨多个sim_minutes
+        .PIR_SIM_FAST(1)
     ) dut (
         .clk(clk),
         .rst_n(rst_n),
@@ -222,6 +223,17 @@ module tb_health_lcd_top;
         // 时序，直接进入入座状态测试。IR 否决测试时再释放 force。
         force dut.ir_active = 1'b1;
         $display("INFO: forcing ir_active=1 for HP/state tests at %0t", $time);
+
+        force dut.ultrasonic_left45_distance_cm = 16'd0;
+        repeat (3) @(posedge clk);
+        if (dut.seated !== 1'b0) begin
+            $display("FAIL zero ultrasonic distance must not count as seated at %0t", $time);
+            errors = errors + 1;
+        end else begin
+            $display("PASS zero ultrasonic distance rejected at %0t", $time);
+        end
+        force dut.ultrasonic_left45_distance_cm = 16'd27;
+        repeat (3) @(posedge clk);
 
         force dut.ultrasonic_front_distance_cm = 16'd40;
         wait_sim_minutes(1);

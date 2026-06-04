@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module uart_rx #(
     parameter integer CLK_FREQ_HZ = 100_000_000,
     parameter integer BAUD_RATE   = 115_200

@@ -3,7 +3,10 @@
 // 单路超声波测距顶层封装。
 // 将触发脉冲生成、Echo 同步边沿检测、距离换算三个模块串接起来，
 // 对外只暴露传感器 Echo/Trig 和厘米距离输出。
-module top_Ranging(
+module top_Ranging #(
+    parameter integer CLK_FREQ_HZ = 100_000_000,
+    parameter integer TRIG_START_DELAY_CYCLES = 0
+)(
     input  wire        clk,
     input  wire        rst_n,
 
@@ -19,7 +22,10 @@ module top_Ranging(
     wire distance_valid;
 
     // 周期性产生超声波 Trig 脉冲，启动传感器测距。
-    trig_generator u_trig (
+    trig_generator #(
+        .CLK_FREQ_HZ(CLK_FREQ_HZ),
+        .START_DELAY_CYCLES(TRIG_START_DELAY_CYCLES)
+    ) u_trig (
         .clk_100m(clk),
         .RST(rst_n),
         .Trig(ultrasonic_trig)

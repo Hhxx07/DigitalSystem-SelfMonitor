@@ -1,3 +1,5 @@
+`timescale 1ns / 1ps
+
 module seat_weight_analyzer #(
     parameter [15:0] SEAT_ON_TH        = 16'd800,
     parameter [15:0] SEAT_OFF_TH       = 16'd300,

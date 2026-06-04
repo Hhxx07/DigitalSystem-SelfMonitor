@@ -40,10 +40,15 @@ module fpga_fsr402_top (
 
     // LED 心跳计数器，用于观察板卡时钟和顶层逻辑是否在运行。
     always @(posedge clk100) begin
-        led_count <= led_count + 27'd1;
-        if (led_count == 27'd99_999_999) begin
+        if (reset) begin
             led_count <= 27'd0;
-            led0 <= ~led0;
+            led0 <= 1'b0;
+        end else begin
+            led_count <= led_count + 27'd1;
+            if (led_count == 27'd99_999_999) begin
+                led_count <= 27'd0;
+                led0 <= ~led0;
+            end
         end
     end
 
