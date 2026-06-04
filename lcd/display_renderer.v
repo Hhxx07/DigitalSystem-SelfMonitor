@@ -27,6 +27,12 @@ module display_renderer #(
     input  wire [9:0]  shoulder_diff_cm,
     input  wire [1:0]  torso_state,
     input  wire [1:0]  posture_level,
+    input  wire [1:0]  weight_left_right_state,
+    input  wire [1:0]  weight_front_back_state,
+    input  wire        lean_left,
+    input  wire        lean_right,
+    input  wire        lean_front,
+    input  wire        lean_back,
     input  wire [7:0]  hp,
     input  wire        hp_zero_alarm,
     output reg         spi_start,
@@ -214,6 +220,58 @@ module display_renderer #(
         end
     endfunction
 
+    function [7:0] weight_state_char;
+        input [1:0] st;
+        input [3:0] pos;
+        begin
+            weight_state_char = 8'h20;
+            case (st)
+                2'd0: begin // GOOD
+                    case (pos) 4'd0: weight_state_char = "G"; 4'd1: weight_state_char = "O"; 4'd2: weight_state_char = "O"; 4'd3: weight_state_char = "D"; default: weight_state_char = " "; endcase
+                end
+                2'd1: begin // WARN
+                    case (pos) 4'd0: weight_state_char = "W"; 4'd1: weight_state_char = "A"; 4'd2: weight_state_char = "R"; 4'd3: weight_state_char = "N"; default: weight_state_char = " "; endcase
+                end
+                2'd2: begin // DANGER
+                    case (pos) 4'd0: weight_state_char = "D"; 4'd1: weight_state_char = "A"; 4'd2: weight_state_char = "N"; 4'd3: weight_state_char = "G"; 4'd4: weight_state_char = "E"; 4'd5: weight_state_char = "R"; default: weight_state_char = " "; endcase
+                end
+                default: weight_state_char = " ";
+            endcase
+        end
+    endfunction
+
+    function [7:0] weight_lr_dir_char;
+        input lean_l;
+        input lean_r;
+        input [3:0] pos;
+        begin
+            weight_lr_dir_char = 8'h20;
+            if (lean_l) begin
+                case (pos) 4'd0: weight_lr_dir_char = "L"; 4'd1: weight_lr_dir_char = "E"; 4'd2: weight_lr_dir_char = "F"; 4'd3: weight_lr_dir_char = "T"; default: weight_lr_dir_char = " "; endcase
+            end else if (lean_r) begin
+                case (pos) 4'd0: weight_lr_dir_char = "R"; 4'd1: weight_lr_dir_char = "I"; 4'd2: weight_lr_dir_char = "G"; 4'd3: weight_lr_dir_char = "H"; 4'd4: weight_lr_dir_char = "T"; default: weight_lr_dir_char = " "; endcase
+            end else begin
+                case (pos) 4'd0: weight_lr_dir_char = "G"; 4'd1: weight_lr_dir_char = "O"; 4'd2: weight_lr_dir_char = "O"; 4'd3: weight_lr_dir_char = "D"; default: weight_lr_dir_char = " "; endcase
+            end
+        end
+    endfunction
+
+    function [7:0] weight_fb_dir_char;
+        input lean_f;
+        input lean_b;
+        input [3:0] pos;
+        begin
+            weight_fb_dir_char = 8'h20;
+            if (lean_f) begin
+                case (pos) 4'd0: weight_fb_dir_char = "F"; 4'd1: weight_fb_dir_char = "R"; 4'd2: weight_fb_dir_char = "O"; 4'd3: weight_fb_dir_char = "N"; 4'd4: weight_fb_dir_char = "T"; default: weight_fb_dir_char = " "; endcase
+            end else if (lean_b) begin
+                case (pos) 4'd0: weight_fb_dir_char = "R"; 4'd1: weight_fb_dir_char = "E"; 4'd2: weight_fb_dir_char = "A"; 4'd3: weight_fb_dir_char = "R"; default: weight_fb_dir_char = " "; endcase
+            end else begin
+                case (pos) 4'd0: weight_fb_dir_char = "G"; 4'd1: weight_fb_dir_char = "O"; 4'd2: weight_fb_dir_char = "O"; 4'd3: weight_fb_dir_char = "D"; default: weight_fb_dir_char = " "; endcase
+            end
+        end
+    endfunction
+
     function [7:0] char_at;
         input [3:0] col;
         input [3:0] row;
@@ -301,6 +359,21 @@ module display_renderer #(
                         default: char_at = " ";
                     endcase
                 end
+                4'd7: begin
+                    case (col)
+                        4'd0: char_at = "W";
+                        4'd1: char_at = "L";
+                        4'd2: char_at = "R";
+                        4'd3: char_at = " ";
+                        4'd4: char_at = weight_lr_dir_char(lean_left, lean_right, 4'd0);
+                        4'd5: char_at = weight_lr_dir_char(lean_left, lean_right, 4'd1);
+                        4'd6: char_at = weight_lr_dir_char(lean_left, lean_right, 4'd2);
+                        4'd7: char_at = weight_lr_dir_char(lean_left, lean_right, 4'd3);
+                        4'd8: char_at = weight_lr_dir_char(lean_left, lean_right, 4'd4);
+                        4'd9: char_at = " ";
+                        default: char_at = weight_state_char(weight_left_right_state, col - 4'd10);
+                    endcase
+                end
                 4'd8: begin
                     case (col)
                         4'd0: char_at = "N";
@@ -315,6 +388,21 @@ module display_renderer #(
                         4'd9: char_at = ascii_digit(active_sec_t);
                         4'd10: char_at = ascii_digit(active_sec_o);
                         default: char_at = " ";
+                    endcase
+                end
+                4'd9: begin
+                    case (col)
+                        4'd0: char_at = "W";
+                        4'd1: char_at = "F";
+                        4'd2: char_at = "R";
+                        4'd3: char_at = " ";
+                        4'd4: char_at = weight_fb_dir_char(lean_front, lean_back, 4'd0);
+                        4'd5: char_at = weight_fb_dir_char(lean_front, lean_back, 4'd1);
+                        4'd6: char_at = weight_fb_dir_char(lean_front, lean_back, 4'd2);
+                        4'd7: char_at = weight_fb_dir_char(lean_front, lean_back, 4'd3);
+                        4'd8: char_at = weight_fb_dir_char(lean_front, lean_back, 4'd4);
+                        4'd9: char_at = " ";
+                        default: char_at = weight_state_char(weight_front_back_state, col - 4'd10);
                     endcase
                 end
                 4'd10: begin

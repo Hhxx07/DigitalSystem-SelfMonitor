@@ -27,6 +27,12 @@ module health_lcd_top #(
     input  wire [15:0] weight_left_rear,
     input  wire [15:0] weight_right_front,
     input  wire [15:0] weight_right_rear,
+    input  wire [1:0]  weight_left_right_state,
+    input  wire [1:0]  weight_front_back_state,
+    input  wire        lean_left,
+    input  wire        lean_right,
+    input  wire        lean_front,
+    input  wire        lean_back,
 
     input  wire sim_fast,
 
@@ -174,20 +180,20 @@ module health_lcd_top #(
         .torso_hp_penalty(torso_hp_penalty)
     );
 
-    weight_balance_analyzer u_weight_balance (
-        .weight_left_front(weight_left_front),
-        .weight_left_rear(weight_left_rear),
-        .weight_right_front(weight_right_front),
-        .weight_right_rear(weight_right_rear),
-        .front_weight_sum(weight_front_sum),
-        .rear_weight_sum(weight_rear_sum),
-        .left_weight_sum(weight_left_sum),
-        .right_weight_sum(weight_right_sum),
-        .front_back_diff(weight_front_back_diff),
-        .left_right_diff(weight_left_right_diff),
-        .front_back_balance(weight_front_back_balance),
-        .left_right_balance(weight_left_right_balance)
-    );
+    assign weight_front_sum = {1'b0, weight_left_front} + {1'b0, weight_right_front};
+    assign weight_rear_sum  = {1'b0, weight_left_rear} + {1'b0, weight_right_rear};
+    assign weight_left_sum  = {1'b0, weight_left_front} + {1'b0, weight_left_rear};
+    assign weight_right_sum = {1'b0, weight_right_front} + {1'b0, weight_right_rear};
+
+    assign weight_front_back_diff = (weight_front_sum >= weight_rear_sum) ?
+                                    (weight_front_sum - weight_rear_sum) :
+                                    (weight_rear_sum - weight_front_sum);
+    assign weight_left_right_diff = (weight_left_sum >= weight_right_sum) ?
+                                    (weight_left_sum - weight_right_sum) :
+                                    (weight_right_sum - weight_left_sum);
+
+    assign weight_front_back_balance = weight_front_back_state;
+    assign weight_left_right_balance = weight_left_right_state;
 
     hp_engine #(
         .INIT_HP(100)
@@ -249,6 +255,12 @@ module health_lcd_top #(
         .shoulder_diff_cm(shoulder_diff_cm),
         .torso_state(torso_state),
         .posture_level(posture_level),
+        .weight_left_right_state(weight_left_right_state),
+        .weight_front_back_state(weight_front_back_state),
+        .lean_left(lean_left),
+        .lean_right(lean_right),
+        .lean_front(lean_front),
+        .lean_back(lean_back),
         .hp(hp_value),
         .hp_zero_alarm(hp_zero_alarm),
         .spi_start(render_spi_start),

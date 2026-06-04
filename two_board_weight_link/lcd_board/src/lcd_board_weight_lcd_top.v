@@ -19,15 +19,10 @@ module lcd_board_weight_lcd_top #(
     input  wire ultrasonic_front_echo,
     input  wire ultrasonic_left45_echo,
     input  wire ultrasonic_right45_echo,
-    input  wire sim_fast,
 
     output wire ultrasonic_front_trig,
     output wire ultrasonic_left45_trig,
     output wire ultrasonic_right45_trig,
-    output wire [16:0] weight_front_back_diff,
-    output wire [16:0] weight_left_right_diff,
-    output wire [1:0]  weight_front_back_balance,
-    output wire [1:0]  weight_left_right_balance,
     output wire lcd_cs_n,
     output wire lcd_rst_n,
     output wire lcd_dc,
@@ -36,15 +31,24 @@ module lcd_board_weight_lcd_top #(
     output wire lcd_blk,
     output wire link_alive,
     output wire packet_valid,
+    output wire seat_present,
     output wire checksum_error
 );
 
     wire reset;
+    wire packet_valid_pulse;
     wire pressure_ok;
+    wire ir_raw_sync;
+    wire ir_motion_event;
+    wire ir_human_ok;
     wire [15:0] weight_left_front;
     wire [15:0] weight_left_rear;
     wire [15:0] weight_right_front;
     wire [15:0] weight_right_rear;
+    wire [16:0] weight_front_back_diff;
+    wire [16:0] weight_left_right_diff;
+    wire [1:0]  weight_front_back_balance;
+    wire [1:0]  weight_left_right_balance;
     wire [1:0]  link_left_right_state;
     wire [1:0]  link_front_back_state;
     wire lean_left;
@@ -52,7 +56,29 @@ module lcd_board_weight_lcd_top #(
     wire lean_front;
     wire lean_back;
 
+    reg [23:0] packet_led_count;
+    reg packet_led_reg;
+
     assign reset = ~rst_n;
+    assign packet_valid = packet_led_reg;
+    assign seat_present = pressure_ok & ir_human_ok;
+
+    always @(posedge clk or negedge rst_n) begin
+        if (!rst_n) begin
+            packet_led_count <= 24'd0;
+            packet_led_reg   <= 1'b0;
+        end else begin
+            if (packet_valid_pulse) begin
+                packet_led_count <= 24'd5_000_000;
+                packet_led_reg   <= 1'b1;
+            end else if (packet_led_count != 24'd0) begin
+                packet_led_count <= packet_led_count - 1'b1;
+                packet_led_reg   <= 1'b1;
+            end else begin
+                packet_led_reg <= 1'b0;
+            end
+        end
+    end
 
     lcd_weight_link_adapter #(
         .CLK_FREQ_HZ(CLK_HZ),
@@ -62,7 +88,7 @@ module lcd_board_weight_lcd_top #(
         .clk(clk),
         .reset(reset),
         .link_uart_rx(link_uart_rx),
-        .packet_valid(packet_valid),
+        .packet_valid(packet_valid_pulse),
         .pressure_ok(pressure_ok),
         .weight_left_front(weight_left_front),
         .weight_left_rear(weight_left_rear),
@@ -76,6 +102,18 @@ module lcd_board_weight_lcd_top #(
         .lean_back(lean_back),
         .link_alive(link_alive),
         .checksum_error(checksum_error)
+    );
+
+    pir_motion_hold_detector #(
+        .CLK_FREQ_HZ(CLK_HZ),
+        .HOLD_SEC(60)
+    ) u_ir_hold (
+        .clk(clk),
+        .rst_n(rst_n),
+        .pir_in(ir_ok),
+        .pir_raw_sync(ir_raw_sync),
+        .motion_event(ir_motion_event),
+        .human_present(ir_human_ok)
     );
 
     health_lcd_top #(
@@ -95,7 +133,7 @@ module lcd_board_weight_lcd_top #(
         .clk(clk),
         .rst_n(rst_n),
         .pressure_ok(pressure_ok),
-        .ir_ok(ir_ok),
+        .ir_ok(ir_human_ok),
         .ultrasonic_front_echo(ultrasonic_front_echo),
         .ultrasonic_left45_echo(ultrasonic_left45_echo),
         .ultrasonic_right45_echo(ultrasonic_right45_echo),
@@ -103,7 +141,13 @@ module lcd_board_weight_lcd_top #(
         .weight_left_rear(weight_left_rear),
         .weight_right_front(weight_right_front),
         .weight_right_rear(weight_right_rear),
-        .sim_fast(sim_fast),
+        .weight_left_right_state(link_left_right_state),
+        .weight_front_back_state(link_front_back_state),
+        .lean_left(lean_left),
+        .lean_right(lean_right),
+        .lean_front(lean_front),
+        .lean_back(lean_back),
+        .sim_fast(1'b1),
         .ultrasonic_front_trig(ultrasonic_front_trig),
         .ultrasonic_left45_trig(ultrasonic_left45_trig),
         .ultrasonic_right45_trig(ultrasonic_right45_trig),
